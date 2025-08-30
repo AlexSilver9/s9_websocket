@@ -1,7 +1,7 @@
 [package]
 name = "s9_websocket"
 version = "0.0.1"
-edition = "2024"
+edition = "2021"
 authors = ["Alexander Silvennoinen <alex@silvennoinen.de>"]
 
 [dependencies]
