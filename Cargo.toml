@@ -4,6 +4,10 @@ version = "0.0.1"
 edition = "2024"
 authors = ["Alexander Silvennoinen <alex@silvennoinen.de>"]
 
+[lib]
+name = "s9_websocket"
+path = "src/lib.rs"
+
 [dependencies]
 tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots"] }
 tracing = "0.1"
