@@ -131,7 +131,7 @@ impl S9WebSocketClient {
     }
 
     #[inline]
-    fn send_text_message(&mut self, s: &str) -> Result<(), Error> {
+    pub fn send_text_message(&mut self, s: &str) -> Result<(), Error> {
         let msg = Message::text(s);
         let send_result = self.socket.send(msg);
         match send_result {
