@@ -28,8 +28,13 @@ pub struct S9WebSocketClient {
 }
 
 impl S9WebSocketClient {
-    pub fn connect(url: &str) -> Result<S9WebSocketClient, Error> {
-        let result = tungstenite::connect(url);
+    pub fn connect(uri: &str) -> Result<S9WebSocketClient, Error> {
+        let uri = match Self::get_uri(uri) {
+            Ok(value) => value,
+            Err(value) => return value,
+        };
+
+        let result = tungstenite::connect(uri);
         match result {
             Ok((sock, response)) => {
                 Self::trace_on_connected(response);
@@ -42,13 +47,10 @@ impl S9WebSocketClient {
         }
     }
 
-    pub fn connect_with_headers(url: &str, headers: &HashMap<String, String>) -> Result<S9WebSocketClient, Error> {
-        let uri: Uri = match Uri::from_str(url) {
-            Ok(uri) => uri,
-            Err(e) => {
-                tracing::error!("S9WebSocketClient error connecting to invalid URL: {}", url);
-                return Err(Error::from(e));
-            }
+    pub fn connect_with_headers(uri: &str, headers: &HashMap<String, String>) -> Result<S9WebSocketClient, Error> {
+        let uri = match Self::get_uri(uri) {
+            Ok(value) => value,
+            Err(value) => return value,
         };
 
         let mut builder = ClientRequestBuilder::new(uri);
@@ -144,6 +146,17 @@ impl S9WebSocketClient {
                 Err(e)
             }
         }
+    }
+
+    fn get_uri(uri: &str) -> Result<Uri, Result<S9WebSocketClient, Error>> {
+        let uri: Uri = match Uri::from_str(uri) {
+            Ok(uri) => uri,
+            Err(e) => {
+                tracing::error!("S9WebSocketClient error connecting to invalid URI: {}", uri);
+                return Err(Err(Error::from(e)));
+            }
+        };
+        Ok(uri)
     }
 
     fn trace_on_connected(response: Response) {
