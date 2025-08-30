@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["Alexander Silvennoinen <alex@silvennoinen.de>"]
 
 [dependencies]
-tungstenite = { version = "0.27", features = ["rustls-tls-native-roots"] }
+tungstenite = { version = "0.27", features = ["rustls"] }
 tracing = "0.1"
 
 [lib]
