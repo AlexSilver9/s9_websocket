@@ -80,7 +80,14 @@ impl S9WebSocketClient {
             let msg = match self.socket.read() {
                 Ok(msg) => msg,
                 Err(e) => {
-                    handler.on_error(format!("S9WebSocketClient error reading message: {}", e));
+                    match e {
+                        Error::ConnectionClosed => {
+                            handler.on_connection_closed(Some("Connection closed".to_string()));
+                        },
+                        _ => {
+                            handler.on_error(format!("S9WebSocketClient error reading message: {}", e));
+                        }
+                    }
                     break;
                 }
             };
@@ -148,6 +155,23 @@ impl S9WebSocketClient {
         }
     }
 
+    pub fn send_close(&mut self) -> Result<(), Error> {
+        self.socket.send(Message::Close(None)).map_err(|e| e)
+    }
+
+    pub fn close(&mut self) {
+        // in fact the same as send_close but with additional logging
+        let close_result = self.socket.close(None);
+        match close_result {
+            Ok(_) => {
+                tracing::trace!("S9WebSocketClient connection close requested");
+            },
+            Err(e) => {
+                tracing::error!("S9WebSocketClient error on connection close request: {}", e);
+            }
+        }
+    }
+
     fn get_uri(uri: &str) -> Result<Uri, Result<S9WebSocketClient, Error>> {
         let uri: Uri = match Uri::from_str(uri) {
             Ok(uri) => uri,
@@ -203,10 +227,10 @@ impl Drop for S9WebSocketClient {
         let close_result = self.socket.close(None);
         match close_result {
             Ok(_) => {
-                tracing::trace!("S9WebSocketClient connection closed successfully on Drop");
+                tracing::trace!("S9WebSocketClient connection close successfully requested on Drop");
             },
             Err(e) => {
-                tracing::error!("S9WebSocketClient error on closing connection on Drop: {}", e);
+                tracing::error!("S9WebSocketClient error on connection close request on Drop: {}", e);
             }
         }
     }
