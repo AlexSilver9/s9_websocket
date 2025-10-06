@@ -92,7 +92,6 @@ impl S9WebSocketClient {
                     },
                     ControlMessage::Close() => {
                         self.close();
-                        break;
                     },
                 }
             }
