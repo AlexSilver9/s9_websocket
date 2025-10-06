@@ -23,6 +23,9 @@ pub trait S9WebSocketClientHandler {
     fn on_pong(&mut self, _data: &[u8]) {
         // Default: noop
     }
+    fn on_quit(&mut self) {
+        // Default: noop
+    }
 }
 
 pub enum ControlMessage {
@@ -99,6 +102,7 @@ impl S9WebSocketClient {
                         if tracing::enabled!(tracing::Level::TRACE) {
                             tracing::trace!("S9WebSocketClient forcibly quitting message loop");
                         }
+                        handler.on_quit();
                         break;
                     }
                 }
@@ -115,6 +119,7 @@ impl S9WebSocketClient {
                             handler.on_error(format!("S9WebSocketClient error reading message: {}", e));
                         }
                     }
+                    handler.on_quit();
                     break;
                 }
             };
@@ -131,6 +136,7 @@ impl S9WebSocketClient {
                     self.trace_on_close(&close_frame);
                     let reason = close_frame.map(|cf| cf.to_string());
                     handler.on_connection_closed(reason);
+                    handler.on_quit();
                     break;
                 },
                 Message::Ping(bytes) => {
