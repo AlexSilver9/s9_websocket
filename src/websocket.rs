@@ -96,6 +96,9 @@ impl S9WebSocketClient {
                         self.close();
                     },
                     ControlMessage::ForceQuit() => {
+                        if tracing::enabled!(tracing::Level::TRACE) {
+                            tracing::trace!("S9WebSocketClient forcibly quitting message loop");
+                        }
                         break;
                     }
                 }
