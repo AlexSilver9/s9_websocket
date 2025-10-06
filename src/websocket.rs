@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::net::TcpStream;
 use std::str;
 use std::str::FromStr;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Bytes, ClientRequestBuilder, Error, Message, Utf8Bytes, WebSocket};
@@ -27,6 +28,7 @@ pub trait S9WebSocketClientHandler {
 pub enum ControlMessage {
     SendText(String),
     Close(),
+    ForceQuit(),
 }
 
 pub struct S9WebSocketClient {
@@ -93,6 +95,9 @@ impl S9WebSocketClient {
                     ControlMessage::Close() => {
                         self.close();
                     },
+                    ControlMessage::ForceQuit() => {
+                        break;
+                    }
                 }
             }
 
