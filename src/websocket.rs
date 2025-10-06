@@ -176,13 +176,15 @@ impl S9WebSocketClient {
     }
 
     pub fn close(&mut self) {
-        let close_result = self.socket.close(None);
-        match close_result {
-            Ok(_) => {
-                tracing::trace!("S9WebSocketClient connection close requested");
-            },
-            Err(e) => {
-                tracing::error!("S9WebSocketClient error on connection close request: {}", e);
+        if self.socket.can_read() {
+            let close_result = self.socket.close(None);
+            match close_result {
+                Ok(_) => {
+                    tracing::trace!("S9WebSocketClient connection close requested");
+                },
+                Err(e) => {
+                    tracing::error!("S9WebSocketClient error on connection close request: {}", e);
+                }
             }
         }
     }
@@ -239,13 +241,15 @@ impl S9WebSocketClient {
 
 impl Drop for S9WebSocketClient {
     fn drop(&mut self) {
-        let close_result = self.socket.close(None);
-        match close_result {
-            Ok(_) => {
-                tracing::trace!("S9WebSocketClient connection close successfully requested on Drop");
-            },
-            Err(e) => {
-                tracing::error!("S9WebSocketClient error on connection close request on Drop: {}", e);
+        if self.socket.can_read() {
+            let close_result = self.socket.close(None);
+            match close_result {
+                Ok(_) => {
+                    tracing::trace!("S9WebSocketClient connection close successfully requested on Drop");
+                },
+                Err(e) => {
+                    tracing::error!("S9WebSocketClient error on connection close request on Drop: {}", e);
+                }
             }
         }
     }
