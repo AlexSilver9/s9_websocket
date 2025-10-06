@@ -83,7 +83,7 @@ impl S9WebSocketClient {
         HANDLER: S9WebSocketClientHandler,
     {
         loop {
-            if let Ok(control_message) = control_rx.recv() {
+            if let Ok(control_message) = control_rx.try_recv() {
                 match control_message {
                     ControlMessage::SendText(text) => {
                         if let Err(e) = self.send_text_message(&text) {
