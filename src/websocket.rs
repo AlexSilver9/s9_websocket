@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::net::TcpStream;
 use std::str;
 use std::str::FromStr;
+use std::sync::mpsc;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Bytes, ClientRequestBuilder, Error, Message, Utf8Bytes, WebSocket};
 use tungstenite::handshake::client::Response;
@@ -21,6 +22,11 @@ pub trait S9WebSocketClientHandler {
     fn on_pong(&mut self, _data: &[u8]) {
         // Default: noop
     }
+}
+
+pub enum ControlMessage {
+    SendText(String),
+    Close(),
 }
 
 pub struct S9WebSocketClient {
@@ -72,11 +78,25 @@ impl S9WebSocketClient {
     }
 
     #[inline]
-    pub fn run<HANDLER>(&mut self, handler: &mut HANDLER)
+    pub fn run<HANDLER>(&mut self, handler: &mut HANDLER, control_rx: mpsc::Receiver<ControlMessage>)
     where
         HANDLER: S9WebSocketClientHandler,
     {
         loop {
+            if let Ok(control_message) = control_rx.recv() {
+                match control_message {
+                    ControlMessage::SendText(text) => {
+                        if let Err(e) = self.send_text_message(&text) {
+                            handler.on_error(format!("Error sending text: {}", e));
+                        }
+                    },
+                    ControlMessage::Close() => {
+                        self.close();
+                        break;
+                    },
+                }
+            }
+
             let msg = match self.socket.read() {
                 Ok(msg) => msg,
                 Err(e) => {
@@ -155,12 +175,7 @@ impl S9WebSocketClient {
         }
     }
 
-    pub fn send_close(&mut self) -> Result<(), Error> {
-        self.socket.send(Message::Close(None)).map_err(|e| e)
-    }
-
     pub fn close(&mut self) {
-        // in fact the same as send_close but with additional logging
         let close_result = self.socket.close(None);
         match close_result {
             Ok(_) => {
