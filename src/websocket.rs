@@ -61,11 +61,14 @@ pub struct S9WebSocketClient {
 }
 
 impl S9WebSocketClient {
-    pub fn connect(uri: &str, max_queue_size: usize) -> Result<S9WebSocketClient, Error> {
-        Self::connect_with_headers(uri, &HashMap::new(), max_queue_size)
+    pub fn connect(uri: &str/*, max_queue_size: usize*/) -> Result<S9WebSocketClient, Error> {
+        Self::connect_with_headers(uri, &HashMap::new()/*, max_queue_size*/)
     }
 
-    pub fn connect_with_headers(uri: &str, headers: &HashMap<String, String>, max_queue_size: usize) -> Result<S9WebSocketClient, Error> {
+    pub fn connect_with_headers(uri: &str, headers: &HashMap<String, String>,/* max_queue_size: usize*/) -> Result<S9WebSocketClient, Error> {
+        // TODO: Make configurable
+        let max_queue_size = 100000;
+
         let uri = match Self::get_uri(uri) {
             Ok(value) => value,
             Err(error) => return error,
@@ -224,7 +227,7 @@ impl S9WebSocketClient {
     }
 
     #[inline]
-    pub fn run<HANDLER>(&mut self, handler: &mut HANDLER)
+    pub fn run<HANDLER>(&mut self, handler: &mut HANDLER, _control_rx: mpsc::Receiver<ControlMessage>) // TODO: Remove _control_rx
     where
         HANDLER: S9WebSocketClientHandler,
     {
