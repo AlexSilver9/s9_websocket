@@ -224,6 +224,7 @@ impl S9WebSocketClient {
         stats.pending_messages = queue.len();
         stats.last_message_time = Some(Instant::now());
 
+        println!("Queue size: {}", stats.pending_messages);
     }
 
     #[inline]
