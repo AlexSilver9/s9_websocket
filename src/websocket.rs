@@ -2,8 +2,6 @@ use std::collections::HashMap;
 use std::net::TcpStream;
 use std::str;
 use std::str::FromStr;
-use std::sync::atomic::AtomicBool;
-use std::sync::mpsc;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Bytes, ClientRequestBuilder, Error, Message, Utf8Bytes, WebSocket};
 use tungstenite::handshake::client::Response;
@@ -83,7 +81,7 @@ impl S9WebSocketClient {
     }
 
     #[inline]
-    pub fn run<HANDLER>(&mut self, handler: &mut HANDLER, control_rx: mpsc::Receiver<ControlMessage>)
+    pub fn run<HANDLER>(&mut self, handler: &mut HANDLER, control_rx: crossbeam_channel::Receiver<ControlMessage>)
     where
         HANDLER: S9WebSocketClientHandler,
     {

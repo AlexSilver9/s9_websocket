@@ -7,6 +7,7 @@ authors = ["Alexander Silvennoinen <alex@silvennoinen.de>"]
 [dependencies]
 #tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots"] }
 tungstenite = { version = "0.27", features = ["native-tls"] }
+crossbeam-channel = "0.5"
 tracing = "0.1"
 
 [lib]
