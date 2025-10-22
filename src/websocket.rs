@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::net::TcpStream;
 use std::{str, thread};
 use std::str::FromStr;
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{unbounded, Receiver, SendError, Sender};
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Bytes, ClientRequestBuilder, Error, Message, Utf8Bytes, WebSocket};
 use tungstenite::handshake::client::Response;
@@ -14,8 +14,16 @@ use tungstenite::protocol::CloseFrame;
 macro_rules! send_or_break {
     ($sender:expr, $context:expr, $event:expr) => {
         if let Err(e) = $sender.send($event) {
-            tracing::error!("S9WebSocketClient failed to send {} through crossbeam channel: {}", $context, e);
+            tracing::error!("S9WebSocketClient failed to send context {} through crossbeam channel: {}", $context, e);
             break;
+        }
+    };
+}
+
+macro_rules! send_or_log {
+    ($sender:expr, $context:expr, $event:expr) => {
+        if let Err(e) = $sender.send($event) {
+            tracing::error!("S9WebSocketClient failed to send context {} through crossbeam channel: {}", $context, e);
         }
     };
 }
@@ -38,7 +46,7 @@ pub trait S9WebSocketClientHandler {
 
 #[derive(Debug)]
 pub enum WebSocketEvent {
-    Connected,
+    Activated,
     TextMessage(Vec<u8>),
     BinaryMessage(Vec<u8>),
     Ping(Vec<u8>),
@@ -57,7 +65,9 @@ pub enum ControlMessage {
 pub struct S9NonBlockingWebSocketClient {
     socket: WebSocket<MaybeTlsStream<TcpStream>>,
     pub control_tx: Sender<ControlMessage>,
-    pub event_rx: Receiver<WebSocketEvent>
+    control_rx: Receiver<ControlMessage>,
+    event_tx: Sender<WebSocketEvent>,
+    pub event_rx: Receiver<WebSocketEvent>,
 }
 
 pub struct S9BlockingWebSocketClient {
@@ -85,12 +95,14 @@ impl S9NonBlockingWebSocketClient {
             Ok((sock, response)) => {
                 trace_on_connected(response);
 
-                let (control_tx, _) = unbounded::<ControlMessage>();
-                let (_, event_rx) = unbounded::<WebSocketEvent>();
+                let (control_tx, control_rx) = unbounded::<ControlMessage>();
+                let (event_tx, event_rx) = unbounded::<WebSocketEvent>();
 
                 Ok(S9NonBlockingWebSocketClient {
                     socket: sock,
                     control_tx,
+                    control_rx,
+                    event_tx,
                     event_rx
                 })
             },
@@ -99,17 +111,15 @@ impl S9NonBlockingWebSocketClient {
     }
 
     #[inline]
-    pub fn run_non_blocking(mut self) -> (Sender<ControlMessage>, Receiver<WebSocketEvent>) {
-        let (event_tx, event_rx) = unbounded::<WebSocketEvent>();
-        let (control_tx, control_rx) = unbounded::<ControlMessage>();
-
+    pub fn run_non_blocking(mut self) {
         thread::spawn(move || {
+            send_or_log!(self.event_tx, "WebSocketEvent::Activated", WebSocketEvent::Activated);
             loop {
-                if let Ok(control_message) = control_rx.try_recv() {
+                if let Ok(control_message) = self.control_rx.try_recv() {
                     match control_message {
                         ControlMessage::SendText(text) => {
-                            if let Err(e) = self.send_text_message(&text) {
-                                send_or_break!(event_tx, "ControlMessage::SendText", WebSocketEvent::Error(format!("Error sending text: {}", e)));
+                            if let Err(e) = self.send_text_message_to_websocket(&text) {
+                                send_or_break!(self.event_tx, "WebSocketEvent::Error on ControlMessage::SendText", WebSocketEvent::Error(format!("Error sending text: {}", e)));
                             }
                         },
                         ControlMessage::Close() => {
@@ -119,7 +129,7 @@ impl S9NonBlockingWebSocketClient {
                             if tracing::enabled!(tracing::Level::TRACE) {
                                 tracing::trace!("S9NonBlockingWebSocketClient forcibly quitting message loop");
                             }
-                            send_or_break!(event_tx, "ControlMessage::ForceQuit", WebSocketEvent::ForceQuit);
+                            send_or_break!(self.event_tx, "WebSocketEvent::ForceQuit on ControlMessage::ForceQuit", WebSocketEvent::ForceQuit);
                             break;
                         }
                     }
@@ -130,10 +140,10 @@ impl S9NonBlockingWebSocketClient {
                     Err(e) => {
                         match e {
                             Error::ConnectionClosed => {
-                                send_or_break!(event_tx, "Error::ConnectionClosed", WebSocketEvent::ConnectionClosed(Some("Connection closed".to_string())));
+                                send_or_break!(self.event_tx, "WebSocketEvent::ConnectionClosed on Error::ConnectionClosed", WebSocketEvent::ConnectionClosed(Some("Connection closed".to_string())));
                             },
                             _ => {
-                                send_or_break!(event_tx, "AllWebsocketReadError", WebSocketEvent::Error(format!("S9WebSocketClient error reading message: {}", e)));
+                                send_or_break!(self.event_tx, "WebSocketEvent::Error on Tungsenite::AnyWebsocketReadError", WebSocketEvent::Error(format!("S9WebSocketClient error reading message: {}", e)));
                             }
                         }
                         break;
@@ -143,29 +153,29 @@ impl S9NonBlockingWebSocketClient {
                 match msg {
                     Message::Text(message) => {
                         trace_on_text_message(&message);
-                        send_or_break!(event_tx, "Message::Text", WebSocketEvent::TextMessage(message.as_bytes().to_vec()));
+                        send_or_break!(self.event_tx, "WebSocketEvent::TextMessage on Message::Text", WebSocketEvent::TextMessage(message.as_bytes().to_vec()));
                     },
                     Message::Binary(bytes) => {
                         trace_on_binary_message(&bytes);
-                        send_or_break!(event_tx, "Message::Binary", WebSocketEvent::BinaryMessage(bytes.to_vec()));
+                        send_or_break!(self.event_tx, "WebSocketEvent::BinaryMessage on Message::Binary", WebSocketEvent::BinaryMessage(bytes.to_vec()));
                     },
                     Message::Close(close_frame) => {
                         trace_on_close(&close_frame);
                         let reason = close_frame.map(|cf| cf.to_string());
-                        send_or_break!(event_tx, "Message::Close", WebSocketEvent::ConnectionClosed(reason));
+                        send_or_break!(self.event_tx, "WebSocketEvent::ConnectionClosed on Message::Close", WebSocketEvent::ConnectionClosed(reason));
                         break;
                     },
                     Message::Ping(bytes) => {
                         if tracing::enabled!(tracing::Level::TRACE) {
                             tracing::trace!("S9NonBlockingWebSocketClient received ping frame: {}", String::from_utf8_lossy(&bytes));
                         }
-                        send_or_break!(event_tx, "Message::Ping", WebSocketEvent::Ping(bytes.to_vec()));
+                        send_or_break!(self.event_tx, "WebSocketEvent::Ping on Message::Ping", WebSocketEvent::Ping(bytes.to_vec()));
                     },
                     Message::Pong(bytes) => {
                         if tracing::enabled!(tracing::Level::TRACE) {
                             tracing::trace!("S9NonBlockingWebSocketClient received pong frame: {}", String::from_utf8_lossy(&bytes));
                         }
-                        send_or_break!(event_tx, "Message::Pong", WebSocketEvent::Pong(bytes.to_vec()));
+                        send_or_break!(self.event_tx, "WebSocketEvent::Pong on Message::Pong", WebSocketEvent::Pong(bytes.to_vec()));
                     },
                     Message::Frame(_) => {
                         if tracing::enabled!(tracing::Level::TRACE) {
@@ -176,11 +186,20 @@ impl S9NonBlockingWebSocketClient {
                 }
             }
         });
-
-        (control_tx, event_rx)
     }
 
-    fn send_text_message(&mut self, s: &str) -> Result<(), Error> {
+    pub fn send_text_message(&mut self, s: &str) -> Result<(), SendError<ControlMessage>> {
+        let result = self.control_tx.send(ControlMessage::SendText(s.to_string()));
+        match result {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                tracing::error!("S9WebSocketClient failed to send context {} through crossbeam channel: {}", "ControlMessage::SendText", e);
+                Err(e)
+            }
+        }
+    }
+
+    fn send_text_message_to_websocket(&mut self, s: &str) -> Result<(), Error> {
         let msg = Message::text(s);
         let send_result = self.socket.send(msg);
         match send_result {
@@ -249,7 +268,7 @@ impl S9BlockingWebSocketClient{
             if let Ok(control_message) = control_rx.try_recv() {
                 match control_message {
                     ControlMessage::SendText(text) => {
-                        if let Err(e) = self.send_text_message(&text) {
+                        if let Err(e) = self.send_text_message_to_websocket(&text) {
                             handler.on_error(format!("Error sending text: {}", e));
                         }
                     },
@@ -325,11 +344,16 @@ impl S9BlockingWebSocketClient{
         pong.push_str(&ping_message[..3]);
         pong.push('o');
         pong.push_str(&ping_message[4..]);
-        self.send_text_message(pong.as_str())
+        self.send_text_message_to_websocket(pong.as_str())
     }
 
     #[inline]
     pub fn send_text_message(&mut self, s: &str) -> Result<(), Error> {
+        self.send_text_message_to_websocket(s)
+    }
+
+    #[inline]
+    fn send_text_message_to_websocket(&mut self, s: &str) -> Result<(), Error> {
         let msg = Message::text(s);
         let send_result = self.socket.send(msg);
         match send_result {
