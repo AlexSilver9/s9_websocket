@@ -54,8 +54,6 @@ pub enum ControlMessage {
     ForceQuit(),
 }
 
-
-
 pub struct S9WebSocketClient {
     socket: WebSocket<MaybeTlsStream<TcpStream>>,
 }
