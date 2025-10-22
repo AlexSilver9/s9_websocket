@@ -63,7 +63,7 @@ pub enum ControlMessage {
 }
 
 pub struct S9NonBlockingWebSocketClient {
-    socket: WebSocket<MaybeTlsStream<TcpStream>>,
+    socket: Option<WebSocket<MaybeTlsStream<TcpStream>>>,
     pub control_tx: Sender<ControlMessage>,
     control_rx: Receiver<ControlMessage>,
     event_tx: Sender<WebSocketEvent>,
@@ -99,7 +99,7 @@ impl S9NonBlockingWebSocketClient {
                 let (event_tx, event_rx) = unbounded::<WebSocketEvent>();
 
                 Ok(S9NonBlockingWebSocketClient {
-                    socket: sock,
+                    socket: Some(sock),
                     control_tx,
                     control_rx,
                     event_tx,
@@ -111,42 +111,48 @@ impl S9NonBlockingWebSocketClient {
     }
 
     #[inline]
-    pub fn run_non_blocking(mut self) {
+    pub fn run_non_blocking(&mut self) {
+        // Take ownership of the socket by replacing it with a dummy value
+        // This is safe because we'll never use the original socket again after spawning
+        let mut socket = self.socket.take().expect("Socket already moved to thread");
+        let control_rx = self.control_rx.clone();
+        let event_tx = self.event_tx.clone();
+
         thread::spawn(move || {
-            send_or_log!(self.event_tx, "WebSocketEvent::Activated", WebSocketEvent::Activated);
+            send_or_log!(event_tx, "WebSocketEvent::Activated", WebSocketEvent::Activated);
             loop {
-                if let Ok(control_message) = self.control_rx.try_recv() {
+                if let Ok(control_message) = control_rx.try_recv() {
                     match control_message {
                         ControlMessage::SendText(text) => {
-                            if let Err(e) = self.send_text_message_to_websocket(&text) {
-                                send_or_break!(self.event_tx, "WebSocketEvent::Error on ControlMessage::SendText", WebSocketEvent::Error(format!("Error sending text: {}", e)));
+                            if let Err(e) = send_text_message_to_websocket(&mut socket, &text, "S9NonBlockingWebSocketClient") {
+                                send_or_break!(event_tx, "WebSocketEvent::Error on ControlMessage::SendText", WebSocketEvent::Error(format!("Error sending text: {}", e)));
                             }
                         },
                         ControlMessage::Close() => {
-                            self.close();
+                            close_websocket(&mut socket, "S9NonBlockingWebSocketClient");
                         },
                         ControlMessage::ForceQuit() => {
                             if tracing::enabled!(tracing::Level::TRACE) {
                                 tracing::trace!("S9NonBlockingWebSocketClient forcibly quitting message loop");
                             }
-                            send_or_break!(self.event_tx, "WebSocketEvent::Quit on ControlMessage::ForceQuit", WebSocketEvent::Quit);
+                            send_or_break!(event_tx, "WebSocketEvent::Quit on ControlMessage::ForceQuit", WebSocketEvent::Quit);
                             break;
                         }
                     }
                 }
 
-                let msg = match self.socket.read() {
+                let msg = match socket.read() {
                     Ok(msg) => msg,
                     Err(e) => {
                         match e {
                             Error::ConnectionClosed => {
-                                send_or_log!(self.event_tx, "WebSocketEvent::ConnectionClosed on Error::ConnectionClosed", WebSocketEvent::ConnectionClosed(Some("Connection closed".to_string())));
+                                send_or_log!(event_tx, "WebSocketEvent::ConnectionClosed on Error::ConnectionClosed", WebSocketEvent::ConnectionClosed(Some("Connection closed".to_string())));
                             },
                             _ => {
-                                send_or_log!(self.event_tx, "WebSocketEvent::Error on Tungsenite::AnyWebsocketReadError", WebSocketEvent::Error(format!("S9WebSocketClient error reading message: {}", e)));
+                                send_or_log!(event_tx, "WebSocketEvent::Error on Tungsenite::AnyWebsocketReadError", WebSocketEvent::Error(format!("S9WebSocketClient error reading message: {}", e)));
                             }
                         }
-                        send_or_break!(self.event_tx, "WebSocketEvent::Quit on Tungsenite::Error", WebSocketEvent::Quit);
+                        send_or_break!(event_tx, "WebSocketEvent::Quit on Tungsenite::Error", WebSocketEvent::Quit);
                         break;
                     }
                 };
@@ -154,29 +160,29 @@ impl S9NonBlockingWebSocketClient {
                 match msg {
                     Message::Text(message) => {
                         trace_on_text_message(&message);
-                        send_or_break!(self.event_tx, "WebSocketEvent::TextMessage on Message::Text", WebSocketEvent::TextMessage(message.as_bytes().to_vec()));
+                        send_or_break!(event_tx, "WebSocketEvent::TextMessage on Message::Text", WebSocketEvent::TextMessage(message.as_bytes().to_vec()));
                     },
                     Message::Binary(bytes) => {
                         trace_on_binary_message(&bytes);
-                        send_or_break!(self.event_tx, "WebSocketEvent::BinaryMessage on Message::Binary", WebSocketEvent::BinaryMessage(bytes.to_vec()));
+                        send_or_break!(event_tx, "WebSocketEvent::BinaryMessage on Message::Binary", WebSocketEvent::BinaryMessage(bytes.to_vec()));
                     },
                     Message::Close(close_frame) => {
                         trace_on_close(&close_frame);
                         let reason = close_frame.map(|cf| cf.to_string());
-                        send_or_break!(self.event_tx, "WebSocketEvent::ConnectionClosed on Message::Close", WebSocketEvent::ConnectionClosed(reason));
+                        send_or_break!(event_tx, "WebSocketEvent::ConnectionClosed on Message::Close", WebSocketEvent::ConnectionClosed(reason));
                         break;
                     },
                     Message::Ping(bytes) => {
                         if tracing::enabled!(tracing::Level::TRACE) {
                             tracing::trace!("S9NonBlockingWebSocketClient received ping frame: {}", String::from_utf8_lossy(&bytes));
                         }
-                        send_or_break!(self.event_tx, "WebSocketEvent::Ping on Message::Ping", WebSocketEvent::Ping(bytes.to_vec()));
+                        send_or_break!(event_tx, "WebSocketEvent::Ping on Message::Ping", WebSocketEvent::Ping(bytes.to_vec()));
                     },
                     Message::Pong(bytes) => {
                         if tracing::enabled!(tracing::Level::TRACE) {
                             tracing::trace!("S9NonBlockingWebSocketClient received pong frame: {}", String::from_utf8_lossy(&bytes));
                         }
-                        send_or_break!(self.event_tx, "WebSocketEvent::Pong on Message::Pong", WebSocketEvent::Pong(bytes.to_vec()));
+                        send_or_break!(event_tx, "WebSocketEvent::Pong on Message::Pong", WebSocketEvent::Pong(bytes.to_vec()));
                     },
                     Message::Frame(_) => {
                         if tracing::enabled!(tracing::Level::TRACE) {
@@ -199,34 +205,34 @@ impl S9NonBlockingWebSocketClient {
             }
         }
     }
+}
 
-    fn send_text_message_to_websocket(&mut self, s: &str) -> Result<(), Error> {
-        let msg = Message::text(s);
-        let send_result = self.socket.send(msg);
-        match send_result {
-            Ok(()) => {
-                if tracing::enabled!(tracing::Level::TRACE) {
-                    tracing::trace!("S9NonBlockingWebSocketClient sent text message: {}", String::from(s));
-                }
-                Ok(())
-            },
-            Err(e) => {
-                tracing::error!("S9NonBlockingWebSocketClient error sending text message: {}", e);
-                Err(e)
+fn send_text_message_to_websocket(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>, s: &str, client_name: &str) -> Result<(), Error> {
+    let msg = Message::text(s);
+    let send_result = socket.send(msg);
+    match send_result {
+        Ok(()) => {
+            if tracing::enabled!(tracing::Level::TRACE) {
+                tracing::trace!("{} sent text message: {}", client_name, String::from(s));
             }
+            Ok(())
+        },
+        Err(e) => {
+            tracing::error!("{} error sending text message: {}", client_name, e);
+            Err(e)
         }
     }
+}
 
-    fn close(&mut self) {
-        if self.socket.can_read() {
-            let close_result = self.socket.close(None);
-            match close_result {
-                Ok(_) => {
-                    tracing::trace!("S9NonBlockingWebSocketClient connection close requested");
-                },
-                Err(e) => {
-                    tracing::error!("S9NonBlockingWebSocketClient error on connection close request: {}", e);
-                }
+fn close_websocket(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>, client_name: &str) {
+    if socket.can_read() {
+        let close_result = socket.close(None);
+        match close_result {
+            Ok(_) => {
+                tracing::trace!("{} connection close requested", client_name);
+            },
+            Err(e) => {
+                tracing::error!("{} error on connection close request: {}", client_name, e);
             }
         }
     }
@@ -437,14 +443,16 @@ fn trace_on_close(close_frame: &Option<CloseFrame>) {
 
 impl Drop for S9NonBlockingWebSocketClient {
     fn drop(&mut self) {
-        if self.socket.can_read() {
-            let close_result = self.socket.close(None);
-            match close_result {
-                Ok(_) => {
-                    tracing::trace!("S9NonBlockingWebSocketClient connection close successfully requested on Drop");
-                },
-                Err(e) => {
-                    tracing::error!("S9NonBlockingWebSocketClient error on connection close request on Drop: {}", e);
+        if let Some(socket) = &mut self.socket {
+            if socket.can_read() {
+                let close_result = socket.close(None);
+                match close_result {
+                    Ok(_) => {
+                        tracing::trace!("S9NonBlockingWebSocketClient connection close successfully requested on Drop");
+                    },
+                    Err(e) => {
+                        tracing::error!("S9NonBlockingWebSocketClient error on connection close request on Drop: {}", e);
+                    }
                 }
             }
         }
