@@ -143,10 +143,12 @@ impl S9NonBlockingWebSocketClient {
                         // Set read timeout on the underlying TCP stream
                         match sock.get_mut() {
                             MaybeTlsStream::Plain(stream) => {
+                                //stream.set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
                                 stream.set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
                             },
                             MaybeTlsStream::NativeTls(stream) => {
-                                stream.get_mut().set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
+                                //stream.get_mut().set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
+                                stream.get_mut().set_nonblocking(true).ok();
                             },
                             #[cfg(feature = "rustls")]
                             MaybeTlsStream::Rustls(stream) => {
