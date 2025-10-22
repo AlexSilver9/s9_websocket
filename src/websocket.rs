@@ -169,7 +169,8 @@ impl S9NonBlockingWebSocketClient {
                     Message::Close(close_frame) => {
                         trace_on_close(&close_frame);
                         let reason = close_frame.map(|cf| cf.to_string());
-                        send_or_break!(event_tx, "WebSocketEvent::ConnectionClosed on Message::Close", WebSocketEvent::ConnectionClosed(reason));
+                        send_or_log!(event_tx, "WebSocketEvent::ConnectionClosed on Message::Close", WebSocketEvent::ConnectionClosed(reason));
+                        send_or_log!(event_tx, "WebSocketEvent::Quit on Message::Close", WebSocketEvent::Quit);
                         break;
                     },
                     Message::Ping(bytes) => {
