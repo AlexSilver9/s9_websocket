@@ -53,7 +53,7 @@ pub enum WebSocketEvent {
     Pong(Vec<u8>),
     ConnectionClosed(Option<String>),
     Error(String),
-    ForceQuit,
+    Quit,
 }
 
 pub enum ControlMessage {
@@ -129,7 +129,7 @@ impl S9NonBlockingWebSocketClient {
                             if tracing::enabled!(tracing::Level::TRACE) {
                                 tracing::trace!("S9NonBlockingWebSocketClient forcibly quitting message loop");
                             }
-                            send_or_break!(self.event_tx, "WebSocketEvent::ForceQuit on ControlMessage::ForceQuit", WebSocketEvent::ForceQuit);
+                            send_or_break!(self.event_tx, "WebSocketEvent::Quit on ControlMessage::ForceQuit", WebSocketEvent::Quit);
                             break;
                         }
                     }
@@ -140,12 +140,13 @@ impl S9NonBlockingWebSocketClient {
                     Err(e) => {
                         match e {
                             Error::ConnectionClosed => {
-                                send_or_break!(self.event_tx, "WebSocketEvent::ConnectionClosed on Error::ConnectionClosed", WebSocketEvent::ConnectionClosed(Some("Connection closed".to_string())));
+                                send_or_log!(self.event_tx, "WebSocketEvent::ConnectionClosed on Error::ConnectionClosed", WebSocketEvent::ConnectionClosed(Some("Connection closed".to_string())));
                             },
                             _ => {
-                                send_or_break!(self.event_tx, "WebSocketEvent::Error on Tungsenite::AnyWebsocketReadError", WebSocketEvent::Error(format!("S9WebSocketClient error reading message: {}", e)));
+                                send_or_log!(self.event_tx, "WebSocketEvent::Error on Tungsenite::AnyWebsocketReadError", WebSocketEvent::Error(format!("S9WebSocketClient error reading message: {}", e)));
                             }
                         }
+                        send_or_break!(self.event_tx, "WebSocketEvent::Quit on Tungsenite::Error", WebSocketEvent::Quit);
                         break;
                     }
                 };
