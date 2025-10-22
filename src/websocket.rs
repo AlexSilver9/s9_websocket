@@ -139,6 +139,21 @@ impl S9NonBlockingWebSocketClient {
                 loop {
                     let msg = {
                         let mut sock = socket_reader.lock().unwrap(); // TODO: Handle error using crossbeam-channel or similar
+                        // Set read timeout on the underlying TCP stream
+                        // Set read timeout on the underlying TCP stream
+                        match sock.get_mut() {
+                            MaybeTlsStream::Plain(stream) => {
+                                stream.set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
+                            },
+                            MaybeTlsStream::NativeTls(stream) => {
+                                stream.get_mut().set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
+                            },
+                            #[cfg(feature = "rustls")]
+                            MaybeTlsStream::Rustls(stream) => {
+                                stream.get_mut().set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
+                            },
+                            _ => {}
+                        }
                         sock.read()
                     };
                     let should_break = msg.is_err();
