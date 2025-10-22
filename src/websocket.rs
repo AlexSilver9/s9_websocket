@@ -118,7 +118,14 @@ impl S9NonBlockingWebSocketClient {
         let control_rx = self.control_rx.clone();
         let event_tx = self.event_tx.clone();
 
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            tracing::debug!("Starting WebSocket non-blocking event loop thread...");
+        }
+
         thread::spawn(move || {
+            if tracing::enabled!(tracing::Level::DEBUG) {
+                tracing::debug!("Starting WebSocket non-blocking event loop thread started...");
+            }
             send_or_log!(event_tx, "WebSocketEvent::Activated", WebSocketEvent::Activated);
             loop {
                 if let Ok(control_message) = control_rx.try_recv() {
