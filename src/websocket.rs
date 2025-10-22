@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::net::TcpStream;
 use std::{str, thread};
 use std::str::FromStr;
-use crossbeam_channel::{unbounded, Receiver, SendError, Sender};
+use crossbeam_channel::{select, unbounded, Receiver, SendError, Sender};
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Bytes, ClientRequestBuilder, Error, Message, Utf8Bytes, WebSocket};
 use tungstenite::handshake::client::Response;
@@ -114,7 +114,7 @@ impl S9NonBlockingWebSocketClient {
     pub fn run_non_blocking(&mut self) {
         // Take ownership of the socket by replacing it with a dummy value
         // This is safe because we'll never use the original socket again after spawning
-        let mut socket = self.socket.take().expect("Socket already moved to thread");
+        let socket = self.socket.take().expect("Socket already moved to thread"); // TODO Throw Err
         let control_rx = self.control_rx.clone();
         let event_tx = self.event_tx.clone();
 
@@ -124,79 +124,122 @@ impl S9NonBlockingWebSocketClient {
 
         thread::spawn(move || {
             if tracing::enabled!(tracing::Level::DEBUG) {
-                tracing::debug!("Starting WebSocket non-blocking event loop thread started...");
+                tracing::debug!("Starting WebSocket non-blocking event loop thread started");
             }
             send_or_log!(event_tx, "WebSocketEvent::Activated", WebSocketEvent::Activated);
-            loop {
-                if let Ok(control_message) = control_rx.try_recv() {
-                    match control_message {
-                        ControlMessage::SendText(text) => {
-                            if let Err(e) = send_text_message_to_websocket(&mut socket, &text, "S9NonBlockingWebSocketClient") {
-                                send_or_break!(event_tx, "WebSocketEvent::Error on ControlMessage::SendText", WebSocketEvent::Error(format!("Error sending text: {}", e)));
-                            }
-                        },
-                        ControlMessage::Close() => {
-                            close_websocket(&mut socket, "S9NonBlockingWebSocketClient");
-                        },
-                        ControlMessage::ForceQuit() => {
-                            if tracing::enabled!(tracing::Level::TRACE) {
-                                tracing::trace!("S9NonBlockingWebSocketClient forcibly quitting message loop");
-                            }
-                            send_or_break!(event_tx, "WebSocketEvent::Quit on ControlMessage::ForceQuit", WebSocketEvent::Quit);
-                            break;
-                        }
+
+            // Split socket into read and write halves would be ideal, but tungstenite doesn't support it
+            // So we need to use Arc<Mutex<>> to share the socket
+            let socket = std::sync::Arc::new(std::sync::Mutex::new(socket));
+            let socket_reader = socket.clone();
+
+            let (socket_tx, socket_rx) = unbounded::<Result<Message, Error>>();
+
+            thread::spawn(move || {
+                loop {
+                    let msg = {
+                        let mut sock = socket_reader.lock().unwrap(); // TODO: Handle error using crossbeam-channel or similar
+                        sock.read()
+                    };
+                    let should_break = msg.is_err();
+
+                    if socket_tx.send(msg).is_err() {
+                        // Main thread has dropped, exit
+                        // TODO: Maybe handle error using crossbeam-channel or similar
+                        break;
+                    }
+
+                    if should_break {
+                        break;
                     }
                 }
+            });
 
-                let msg = match socket.read() {
-                    Ok(msg) => msg,
-                    Err(e) => {
-                        match e {
-                            Error::ConnectionClosed => {
-                                send_or_log!(event_tx, "WebSocketEvent::ConnectionClosed on Error::ConnectionClosed", WebSocketEvent::ConnectionClosed(Some("Connection closed".to_string())));
+            loop {
+                select! {
+                    recv(control_rx) -> control_msg => {
+                        match control_msg {
+                            Ok(ControlMessage::SendText(text)) => {
+                                let mut sock = socket.lock().unwrap(); // TODO: Handle error using crossbeam-channel or similar
+                                if let Err(e) = send_text_message_to_websocket(&mut sock, &text, "S9NonBlockingWebSocketClient") {
+                                    send_or_break!(event_tx, "WebSocketEvent::Error on ControlMessage::SendText", WebSocketEvent::Error(format!("Error sending text: {}", e)));
+                                }
                             },
-                            _ => {
-                                send_or_log!(event_tx, "WebSocketEvent::Error on Tungsenite::AnyWebsocketReadError", WebSocketEvent::Error(format!("S9WebSocketClient error reading message: {}", e)));
+                            Ok(ControlMessage::Close()) => {
+                                let mut sock = socket.lock().unwrap(); // TODO: Handle error using crossbeam-channel or similar
+                                close_websocket(&mut sock, "S9NonBlockingWebSocketClient");
+                            },
+                            Ok(ControlMessage::ForceQuit()) => {
+                                if tracing::enabled!(tracing::Level::TRACE) {
+                                    tracing::trace!("S9NonBlockingWebSocketClient forcibly quitting message loop");
+                                }
+                                send_or_break!(event_tx, "WebSocketEvent::Quit on ControlMessage::ForceQuit", WebSocketEvent::Quit);
+                                break;
+                            },
+                            Err(e) => {
+                                // TODO: Handle error using crossbeam-channel or similar
+                                break;
                             }
                         }
-                        send_or_break!(event_tx, "WebSocketEvent::Quit on Tungsenite::Error", WebSocketEvent::Quit);
-                        break;
-                    }
-                };
-
-                match msg {
-                    Message::Text(message) => {
-                        trace_on_text_message(&message);
-                        send_or_break!(event_tx, "WebSocketEvent::TextMessage on Message::Text", WebSocketEvent::TextMessage(message.as_bytes().to_vec()));
                     },
-                    Message::Binary(bytes) => {
-                        trace_on_binary_message(&bytes);
-                        send_or_break!(event_tx, "WebSocketEvent::BinaryMessage on Message::Binary", WebSocketEvent::BinaryMessage(bytes.to_vec()));
-                    },
-                    Message::Close(close_frame) => {
-                        trace_on_close(&close_frame);
-                        let reason = close_frame.map(|cf| cf.to_string());
-                        send_or_log!(event_tx, "WebSocketEvent::ConnectionClosed on Message::Close", WebSocketEvent::ConnectionClosed(reason));
-                        send_or_log!(event_tx, "WebSocketEvent::Quit on Message::Close", WebSocketEvent::Quit);
-                        break;
-                    },
-                    Message::Ping(bytes) => {
-                        if tracing::enabled!(tracing::Level::TRACE) {
-                            tracing::trace!("S9NonBlockingWebSocketClient received ping frame: {}", String::from_utf8_lossy(&bytes));
+                    recv(socket_rx) -> socket_msg => {
+                        match socket_msg {
+                            Ok(Ok(msg)) => {
+                                match msg {
+                                    Message::Text(message) => {
+                                        trace_on_text_message(&message);
+                                        send_or_break!(event_tx, "WebSocketEvent::TextMessage on Message::Text", WebSocketEvent::TextMessage(message.as_bytes().to_vec()));
+                                    },
+                                    Message::Binary(bytes) => {
+                                        trace_on_binary_message(&bytes);
+                                        send_or_break!(event_tx, "WebSocketEvent::BinaryMessage on Message::Binary", WebSocketEvent::BinaryMessage(bytes.to_vec()));
+                                    },
+                                    Message::Close(close_frame) => {
+                                        trace_on_close(&close_frame);
+                                        let reason = close_frame.map(|cf| cf.to_string());
+                                        send_or_log!(event_tx, "WebSocketEvent::ConnectionClosed on Message::Close", WebSocketEvent::ConnectionClosed(reason));
+                                        send_or_log!(event_tx, "WebSocketEvent::Quit on Message::Close", WebSocketEvent::Quit);
+                                        break;
+                                    },
+                                    Message::Ping(bytes) => {
+                                        if tracing::enabled!(tracing::Level::TRACE) {
+                                            tracing::trace!("S9NonBlockingWebSocketClient received ping frame: {}", String::from_utf8_lossy(&bytes));
+                                        }
+                                        send_or_break!(event_tx, "WebSocketEvent::Ping on Message::Ping", WebSocketEvent::Ping(bytes.to_vec()));
+                                    },
+                                    Message::Pong(bytes) => {
+                                        if tracing::enabled!(tracing::Level::TRACE) {
+                                            tracing::trace!("S9NonBlockingWebSocketClient received pong frame: {}", String::from_utf8_lossy(&bytes));
+                                        }
+                                        send_or_break!(event_tx, "WebSocketEvent::Pong on Message::Pong", WebSocketEvent::Pong(bytes.to_vec()));
+                                    },
+                                    Message::Frame(_) => {
+                                        if tracing::enabled!(tracing::Level::TRACE) {
+                                            tracing::trace!("S9NonBlockingWebSocketClient received frame from server");
+                                        }
+                                        // No handling for frames until use case needs it
+                                    }
+                                }
+                            },
+                            Ok(Err(e)) => {
+                                match e {
+                                    Error::ConnectionClosed => {
+                                        send_or_log!(event_tx, "WebSocketEvent::ConnectionClosed on Error::ConnectionClosed", WebSocketEvent::ConnectionClosed(Some("Connection closed".to_string())));
+                                    },
+                                    _ => {
+                                        send_or_log!(event_tx, "WebSocketEvent::Error on Tungsenite::AnyWebsocketReadError", WebSocketEvent::Error(format!("S9WebSocketClient error reading message: {}", e)));
+                                    }
+                                }
+                                send_or_break!(event_tx, "WebSocketEvent::Quit on Tungsenite::Error", WebSocketEvent::Quit);
+                                break;
+                            },
+                            Err(_) => {
+                                // Socket thread has closed
+                                send_or_log!(event_tx, "WebSocketEvent::Error on socket thread closed", WebSocketEvent::Error("Socket reader thread closed unexpectedly".to_string()));
+                                send_or_break!(event_tx, "WebSocketEvent::Quit on socket thread closed", WebSocketEvent::Quit);
+                                break;
+                            }
                         }
-                        send_or_break!(event_tx, "WebSocketEvent::Ping on Message::Ping", WebSocketEvent::Ping(bytes.to_vec()));
-                    },
-                    Message::Pong(bytes) => {
-                        if tracing::enabled!(tracing::Level::TRACE) {
-                            tracing::trace!("S9NonBlockingWebSocketClient received pong frame: {}", String::from_utf8_lossy(&bytes));
-                        }
-                        send_or_break!(event_tx, "WebSocketEvent::Pong on Message::Pong", WebSocketEvent::Pong(bytes.to_vec()));
-                    },
-                    Message::Frame(_) => {
-                        if tracing::enabled!(tracing::Level::TRACE) {
-                            tracing::trace!("S9NonBlockingWebSocketClient received frame from server");
-                        }
-                        // No handling for frames until use case needs it
                     }
                 }
             }
