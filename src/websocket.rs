@@ -39,22 +39,7 @@ pub struct S9WebSocketClient {
 
 impl S9WebSocketClient {
     pub fn connect(uri: &str) -> Result<S9WebSocketClient, Error> {
-        let uri = match Self::get_uri(uri) {
-            Ok(value) => value,
-            Err(value) => return value,
-        };
-
-        let result = tungstenite::connect(uri);
-        match result {
-            Ok((sock, response)) => {
-                Self::trace_on_connected(response);
-
-                Ok(S9WebSocketClient {
-                    socket: sock,
-                })
-            },
-            Err(e) => Err(e)
-        }
+        Self::connect_with_headers(uri, &HashMap::new())
     }
 
     pub fn connect_with_headers(uri: &str, headers: &HashMap<String, String>) -> Result<S9WebSocketClient, Error> {
