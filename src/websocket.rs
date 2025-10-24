@@ -64,31 +64,20 @@ pub enum ControlMessage {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum NonBlockingStrategy {
-    SpinNonBlocking(Option<Duration>),
-    SpinBlockingWithTimeout(Duration, Option<Duration>),
+pub struct NonBlockingOptions {
+    spin_wait_duration: Option<Duration>
 }
 
-impl NonBlockingStrategy {
-    pub fn new_non_blocking_strategy(spin_wait_duration: Option<Duration>) -> Result<Self, String> {
+impl NonBlockingOptions {
+    pub fn new(spin_wait_duration: Option<Duration>) -> Result<Self, String> {
         if let Some(duration) = spin_wait_duration {
             if duration.is_zero() {
                 return Err("Spin wait duration cannot be zero".to_string());
             }
         }
-        Ok(NonBlockingStrategy::SpinNonBlocking(spin_wait_duration))
-    }
-
-    pub fn new_timeout_strategy(socket_read_timeout: Duration, spin_wait_duration: Option<Duration>) -> Result<Self, String> {
-        if socket_read_timeout.is_zero() {
-            return Err("Socket read timeout cannot be zero".to_string());
-        }
-        if let Some(duration) = spin_wait_duration {
-            if duration.is_zero() {
-                return Err("Spin wait duration cannot be zero".to_string());
-            }
-        }
-        Ok(NonBlockingStrategy::SpinBlockingWithTimeout(socket_read_timeout, spin_wait_duration))
+        Ok(Self {
+            spin_wait_duration
+        })
     }
 }
 
@@ -141,7 +130,7 @@ impl S9NonBlockingWebSocketClient {
     }
 
     #[inline]
-    pub fn run_non_blocking(&mut self, non_blocking_strategy: NonBlockingStrategy) {
+    pub fn run_non_blocking(&mut self, non_blocking_options: NonBlockingOptions) {
         // Take ownership of the socket by replacing it with a dummy value
         // This is safe because we'll never use the original socket again after spawning
         let mut socket = self.socket.take().expect("Socket already moved to thread"); // TODO Throw Err
@@ -155,10 +144,10 @@ impl S9NonBlockingWebSocketClient {
         // Set underlying streams to pure non-blocking or fake non-blocking with timeout
         match socket.get_mut() {
             MaybeTlsStream::Plain(stream) => {
-                Self::set_non_blocking_mode(&non_blocking_strategy, stream);
+                Self::set_non_blocking_mode(stream);
             },
             MaybeTlsStream::NativeTls(stream) => {
-                Self::set_non_blocking_mode(&non_blocking_strategy, stream.get_mut());
+                Self::set_non_blocking_mode(stream.get_mut());
             },
             /*#[cfg(feature = "rustls")]
             MaybeTlsStream::Rustls(stream) => {
@@ -166,11 +155,6 @@ impl S9NonBlockingWebSocketClient {
             },*/
             _ => {}
         }
-
-        let spin_wait_duration: Option<Duration> = match non_blocking_strategy {
-            NonBlockingStrategy::SpinNonBlocking(spin_wait_duration) => spin_wait_duration,
-            NonBlockingStrategy::SpinBlockingWithTimeout(_, spin_wait_duration) => spin_wait_duration,
-        };
 
         thread::spawn(move || {
             if tracing::enabled!(tracing::Level::DEBUG) {
@@ -186,30 +170,16 @@ impl S9NonBlockingWebSocketClient {
             let (socket_tx, socket_rx) = unbounded::<Result<Message, Error>>();
 
             thread::spawn(move || {
-                let non_blocking_strategy = non_blocking_strategy.clone();
                 loop {
                     let msg = {
                         let mut sock = socket_reader.lock().unwrap(); // TODO: Handle error using crossbeam-channel or similar
                         sock.read()
                     };
-                    let notify_on_socket_err = match non_blocking_strategy {
-                        NonBlockingStrategy::SpinNonBlocking(_) => {
-                            match &msg {
-                                Err(Error::Io(io_err)) if io_err.kind() == std::io::ErrorKind::WouldBlock => {
-                                    false // Expected for non-blocking sockets, don't send or break
-                                },
-                                _ => true
-                            }
+                    let notify_on_socket_err = match &msg {
+                        Err(Error::Io(io_err)) if io_err.kind() == std::io::ErrorKind::WouldBlock => {
+                            false // Expected for non-blocking sockets, don't send or break
                         },
-                        NonBlockingStrategy::SpinBlockingWithTimeout(_, _) => {
-                            match &msg {
-                                Err(Error::Io(io_err)) if io_err.kind() == std::io::ErrorKind::TimedOut => {
-                                    // Expected for timeout sockets, don't send or break
-                                    false
-                                },
-                                _ => true
-                            }
-                        }
+                        _ => true
                     };
 
                     if notify_on_socket_err {
@@ -224,7 +194,7 @@ impl S9NonBlockingWebSocketClient {
                         }
                     }
 
-                    if let Some(duration) = spin_wait_duration {
+                    if let Some(duration) = non_blocking_options.spin_wait_duration {
                         thread::sleep(duration);
                     }
                 }
@@ -321,19 +291,9 @@ impl S9NonBlockingWebSocketClient {
         });
     }
 
-    fn set_non_blocking_mode(non_blocking_strategy: &NonBlockingStrategy, stream: &mut TcpStream) {
-        match non_blocking_strategy {
-            NonBlockingStrategy::SpinNonBlocking(_) => {
-                stream.set_read_timeout(None).ok();// TODO: return Errors;
-                stream.set_nonblocking(true).ok();
-                stream.set_nodelay(true).ok();
-            },
-            NonBlockingStrategy::SpinBlockingWithTimeout(socket_read_timeout, _) => {
-                stream.set_read_timeout(Some(*socket_read_timeout)).ok();
-                stream.set_nonblocking(false).ok();
-                stream.set_nodelay(true).ok();
-            }
-        }
+    fn set_non_blocking_mode(stream: &mut TcpStream) {
+        stream.set_nonblocking(true).ok();
+        stream.set_nodelay(true).ok();
     }
 
     pub fn send_text_message(&mut self, s: &str) -> Result<(), SendError<ControlMessage>> {
