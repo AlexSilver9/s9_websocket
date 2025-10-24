@@ -130,13 +130,18 @@ For Secure WebSockets the TLS features currently only native-tls supported.
 1. **Custom Error Type**: Need unified error handling (see TODO in code)
 2. **Socket Unthreading**: Would prefer to e.g. split socket into read/write halves or unthread read instead of using Arc<Mutex<>>
 3. **Error Handling in Threads**: Some unwrap() calls in thread code should be handled more gracefully
-4. **Frame Handling**: Currently no-op for raw frames
+4. **Tests**: Currently no tests are written
+5. **API Documentation: Currently no API documentation is written
+6. **Code Documentation: Currently no code documentation is written
 
 ## Future Improvements
 1. Implement custom error type for better error handling
 2. Add support for rustls
-3. Add metrics/statistics collection
-4. Support for custom ping/pong handling
+3. Add tests
+4. Add API documentation
+5. Add code documentation
+6. Add metrics/statistics collection
+7. Add benchmarks, e.g. blocking vs. non-blocking
 
 ## Known Issues & Gotchas
 - None

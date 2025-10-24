@@ -254,6 +254,12 @@ match client.connect("wss://example.com/ws") {
 - **Non-blocking client**: Thread-safe via channels, can be shared across threads
 - **Blocking client**: Not thread-safe, use from a single thread or wrap in Arc<Mutex<>>
 
+## API documentation
+No API and code documentation is included in this project yet. This is a target of future improvement.
+
+## Testing
+No tests are included in this project yet. This is a target of future improvement.
+
 ## Contributing
 Contributions are welcome!
 Please feel free to submit bugs and make feature requests [here](https://github.com/AlexSilver9/s9_websocket/issues)
