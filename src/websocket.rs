@@ -135,7 +135,7 @@ impl S9NonBlockingWebSocketClient {
     pub fn run_non_blocking(&mut self, non_blocking_options: NonBlockingOptions) -> Result<(), Box<dyn std::error::Error>> {
         // Take ownership of the socket by replacing it with a dummy value
         // This is safe because we'll never use the original socket again after spawning
-        let mut socket = self.socket.take();
+        let socket = self.socket.take();
         let mut socket = match socket {
             Some(s) => s,
             None => return Err("Socket already moved to thread".into())
@@ -215,7 +215,7 @@ impl S9NonBlockingWebSocketClient {
                                 break;
                             },
                             Err(e) => {
-                                // TODO: Handle error using crossbeam-channel or similar
+                                // TODO: Handle error, e.g. using crossbeam-channel or log or panic
                                 break;
                             }
                         }
