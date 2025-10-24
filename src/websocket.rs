@@ -156,11 +156,6 @@ impl S9NonBlockingWebSocketClient {
                 stream.get_mut().set_nonblocking(true)?;
                 stream.get_mut().set_nodelay(true)?;
             },
-            /*#[cfg(feature = "rustls")]
-            MaybeTlsStream::Rustls(stream) => {
-                stream.get_mut().set_nonblocking(true)?;
-                stream.get_mut().set_nodelay(true)?;
-            },*/
             _ => {}
         }
 
