@@ -173,11 +173,10 @@ impl S9NonBlockingWebSocketClient {
 
                     let msg = {
                         // Acquire lock on shared socket, exit thread if poisoned
-                        let sock = socket_reader.lock();
-                        let mut sock = match sock {
+                        let mut sock = match socket_reader.lock() {
                             Ok(sock) => sock,
                             Err(e) => {
-                                send_or_log!(event_tx_for_socket_thread, "Mutex", WebSocketEvent::Error(format!("Failed to aquire lock for socket for reading: {}", e)));
+                                send_or_log!(event_tx_for_socket_thread, "Mutex::Lock", WebSocketEvent::Error(format!("Failed to aquire lock for socket read: {}", e)));
                                 return;
                             }
                         };
@@ -222,13 +221,25 @@ impl S9NonBlockingWebSocketClient {
                     recv(control_rx) -> control_msg => {
                         match control_msg {
                             Ok(ControlMessage::SendText(text)) => {
-                                let mut sock = socket.lock().unwrap(); // TODO: Handle error using crossbeam-channel or similar
+                                let mut sock = match socket.lock() {
+                                    Ok(sock) => sock,
+                                    Err(e) => {
+                                        send_or_log!(event_tx, "Mutex::Lock on ControlMessage::SendText", WebSocketEvent::Error(format!("Failed to aquire lock for socket send: {}", e)));
+                                        break;
+                                    }
+                                };
                                 if let Err(e) = send_text_message_to_websocket(&mut sock, &text, "S9NonBlockingWebSocketClient") {
                                     send_or_break!(event_tx, "WebSocketEvent::Error on ControlMessage::SendText", WebSocketEvent::Error(format!("Error sending text: {}", e)));
                                 }
                             },
                             Ok(ControlMessage::Close()) => {
-                                let mut sock = socket.lock().unwrap(); // TODO: Handle error using crossbeam-channel or similar
+                                let mut sock = match socket.lock() {
+                                    Ok(sock) => sock,
+                                    Err(e) => {
+                                        send_or_log!(event_tx, "Mutex::Lock on ControlMessage::Close", WebSocketEvent::Error(format!("Failed to aquire lock for socket send: {}", e)));
+                                        break;
+                                    }
+                                };
                                 close_websocket(&mut sock, "S9NonBlockingWebSocketClient");
                             },
                             Ok(ControlMessage::ForceQuit()) => {
@@ -239,8 +250,8 @@ impl S9NonBlockingWebSocketClient {
                                 break;
                             },
                             Err(e) => {
-                                // TODO: Handle error, e.g. using crossbeam-channel or maybe panic
-                                tracing::error!("Error receiving from control channel: {}", e);
+                                // Channel dropped, try notify event channel
+                                send_or_log!(event_tx, "Read from ControlMessage", WebSocketEvent::Error(format!("Failed read from control channel: {}", e)));
                                 break;
                             }
                         }
