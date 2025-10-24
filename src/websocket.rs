@@ -10,14 +10,12 @@ use tungstenite::handshake::client::Response;
 use tungstenite::http::{Uri};
 use tungstenite::protocol::CloseFrame;
 
-// TODO: add non-blocking, idea: https://github.com/haxpor/bybit-shiprekt/blob/6c3c5693d675fc997ce5e76df27e571f2aaaf291/src/main.rs
-
-// TODO: use same type of Err or use custon Error type
+// TODO: Use custom Error type for API
 
 macro_rules! send_or_break {
     ($sender:expr, $context:expr, $event:expr) => {
         if let Err(e) = $sender.send($event) {
-            tracing::error!("S9WebSocketClient failed to send context {} through crossbeam channel: {}", $context, e);
+            tracing::error!("S9NonBlockingWebSocketClient failed to send context {} through crossbeam channel: {}", $context, e);
             break;
         }
     };
@@ -26,7 +24,7 @@ macro_rules! send_or_break {
 macro_rules! send_or_log {
     ($sender:expr, $context:expr, $event:expr) => {
         if let Err(e) = $sender.send($event) {
-            tracing::error!("S9WebSocketClient failed to send context {} through crossbeam channel: {}", $context, e);
+            tracing::error!("S9NonBlockingWebSocketClient failed to send context {} through crossbeam channel: {}", $context, e);
         }
     };
 }
@@ -162,24 +160,39 @@ impl S9NonBlockingWebSocketClient {
 
             let (socket_tx, socket_rx) = unbounded::<Result<Message, Error>>();
 
+            let event_tx_for_socket_thread = event_tx.clone();
+
             thread::spawn(move || {
                 loop {
                     let msg = {
-                        let mut sock = socket_reader.lock().unwrap(); // TODO: Handle error using crossbeam-channel or similar
+                        // TODO: Handle error using crossbeam-channel or similar
+                        let sock = socket_reader.lock();
+                        let mut sock = match sock {
+                            Ok(sock) => sock,
+                            Err(e) => {
+                                tracing::error!("S9NonBlockingWebSocketClient failed to aquire lock socket for reading: {}", e);
+                                return;
+                            }
+                        };
                         sock.read()
                     };
-                    let notify_on_socket_err = match &msg {
+                    let send_to_channel = match &msg {
                         Err(Error::Io(io_err)) if io_err.kind() == std::io::ErrorKind::WouldBlock => {
                             false // Expected for non-blocking sockets, don't send or break
+                        },
+                        Err(_) => {
+                            tracing::error!("S9NonBlockingWebSocketClient failed to read from socket: {:?}", msg);
+                            true
                         },
                         _ => true
                     };
 
-                    if notify_on_socket_err {
+                    if send_to_channel {
                         let should_break = msg.is_err();
-                        if socket_tx.send(msg).is_err() {
-                            // Main thread has dropped, exit
-                            // TODO: Maybe handle error using crossbeam-channel or similar
+                        let result = socket_tx.send(msg);
+                        if result.is_err() {
+                            // Main thread has dropped, try notify channel
+                            send_or_log!(event_tx_for_socket_thread, "Socket Message ", WebSocketEvent::Error(format!("Error reading from socket: {}", result.unwrap_err())));
                             break;
                         }
                         if should_break {
@@ -215,7 +228,8 @@ impl S9NonBlockingWebSocketClient {
                                 break;
                             },
                             Err(e) => {
-                                // TODO: Handle error, e.g. using crossbeam-channel or log or panic
+                                // TODO: Handle error, e.g. using crossbeam-channel or maybe panic
+                                tracing::error!("Error receiving from control channel: {}", e);
                                 break;
                             }
                         }
@@ -262,10 +276,10 @@ impl S9NonBlockingWebSocketClient {
                             Ok(Err(e)) => {
                                 match e {
                                     Error::ConnectionClosed => {
-                                        send_or_log!(event_tx, "WebSocketEvent::ConnectionClosed on Error::ConnectionClosed", WebSocketEvent::ConnectionClosed(Some("Connection closed".to_string())));
+                                        send_or_log!(event_tx, "WebSocketEvent::ConnectionClosed on Error::ConnectionClosed", WebSocketEvent::ConnectionClosed(Some("S9NonBlockingWebSocketClient connection closed".to_string())));
                                     },
                                     _ => {
-                                        send_or_log!(event_tx, "WebSocketEvent::Error on Tungsenite::AnyWebsocketReadError", WebSocketEvent::Error(format!("S9WebSocketClient error reading message: {}", e)));
+                                        send_or_log!(event_tx, "WebSocketEvent::Error on Tungsenite::AnyWebsocketReadError", WebSocketEvent::Error(format!("S9NonBlockingWebSocketClient error reading message: {}", e)));
                                     }
                                 }
                                 send_or_break!(event_tx, "WebSocketEvent::Quit on Tungsenite::Error", WebSocketEvent::Quit);
@@ -306,7 +320,7 @@ impl S9NonBlockingWebSocketClient {
         match result {
             Ok(()) => Ok(()),
             Err(e) => {
-                tracing::error!("S9WebSocketClient failed to send context {} through crossbeam channel: {}", "ControlMessage::SendText", e);
+                tracing::error!("S9NonBlockingWebSocketClient failed to send context {} through crossbeam channel: {}", "ControlMessage::SendText", e);
                 Err(e)
             }
         }
