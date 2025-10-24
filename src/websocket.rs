@@ -146,7 +146,7 @@ impl S9NonBlockingWebSocketClient {
     }
 
     #[inline]
-    pub fn run_non_blocking(&mut self) {
+    pub fn run_non_blocking(&mut self, non_blocking_strategy: NonBlockingStrategy) {
         // Take ownership of the socket by replacing it with a dummy value
         // This is safe because we'll never use the original socket again after spawning
         let mut socket = self.socket.take().expect("Socket already moved to thread"); // TODO Throw Err
@@ -160,17 +160,14 @@ impl S9NonBlockingWebSocketClient {
         // Set underlying streams to pure non-blocking or fake non-blocking with timeout
         match socket.get_mut() {
             MaybeTlsStream::Plain(stream) => {
-                stream.set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
-                stream.set_nonblocking(true).ok();
+                Self::set_non_blocking_mode(&non_blocking_strategy, stream);
             },
             MaybeTlsStream::NativeTls(stream) => {
-                stream.get_mut().set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
-                stream.get_mut().set_nonblocking(true).ok();
+                Self::set_non_blocking_mode(&non_blocking_strategy, stream.get_mut());
             },
             /*#[cfg(feature = "rustls")]
             MaybeTlsStream::Rustls(stream) => {
-                stream.get_mut().set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
-                stream.get_mut().set_nonblocking(true).ok();
+                Self::set_non_blocking_mode(&non_blocking_strategy, stream.get_mut());
             },*/
             _ => {}
         }
@@ -312,6 +309,21 @@ impl S9NonBlockingWebSocketClient {
                 }
             }
         });
+    }
+
+    fn set_non_blocking_mode(non_blocking_strategy: &NonBlockingStrategy, stream: &mut TcpStream) {
+        match non_blocking_strategy {
+            NonBlockingStrategy::SpinNonBlocking(_) => {
+                stream.set_read_timeout(None).ok();
+                stream.set_nonblocking(true).ok();
+                stream.set_nodelay(true).ok();
+            },
+            NonBlockingStrategy::SpinBlockingWithTimeout(timeout_duration, _) => {
+                stream.set_read_timeout(Some(*timeout_duration)).ok();
+                stream.set_nonblocking(false).ok();
+                stream.set_nodelay(true).ok();
+            }
+        }
     }
 
     pub fn send_text_message(&mut self, s: &str) -> Result<(), SendError<ControlMessage>> {
