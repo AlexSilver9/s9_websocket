@@ -13,6 +13,7 @@ use tungstenite::protocol::CloseFrame;
 // TODO: add non-blocking, idea: https://github.com/haxpor/bybit-shiprekt/blob/6c3c5693d675fc997ce5e76df27e571f2aaaf291/src/main.rs
 
 // TODO: use same type of Err or use custon Error type
+
 macro_rules! send_or_break {
     ($sender:expr, $context:expr, $event:expr) => {
         if let Err(e) = $sender.send($event) {
@@ -146,18 +147,7 @@ impl S9NonBlockingWebSocketClient {
             tracing::debug!("Starting WebSocket non-blocking event loop thread...");
         }
 
-        // Set underlying streams to pure non-blocking or fake non-blocking with timeout
-        match socket.get_mut() {
-            MaybeTlsStream::Plain(stream) => {
-                stream.set_nonblocking(true)?;
-                stream.set_nodelay(true)?;
-            },
-            MaybeTlsStream::NativeTls(stream) => {
-                stream.get_mut().set_nonblocking(true)?;
-                stream.get_mut().set_nodelay(true)?;
-            },
-            _ => {}
-        }
+        Self::set_non_blocking(&mut socket)?;
 
         thread::spawn(move || {
             if tracing::enabled!(tracing::Level::DEBUG) {
@@ -292,6 +282,22 @@ impl S9NonBlockingWebSocketClient {
                 }
             }
         });
+        Ok(())
+    }
+
+    fn set_non_blocking(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> Result<(), Box<dyn std::error::Error>> {
+        // Set underlying streams to pure non-blocking or fake non-blocking with timeout
+        match socket.get_mut() {
+            MaybeTlsStream::Plain(stream) => {
+                stream.set_nonblocking(true)?;
+                stream.set_nodelay(true)?;
+            },
+            MaybeTlsStream::NativeTls(stream) => {
+                stream.get_mut().set_nonblocking(true)?;
+                stream.get_mut().set_nodelay(true)?;
+            },
+            _ => {}
+        }
         Ok(())
     }
 
