@@ -10,7 +10,14 @@ use tungstenite::handshake::client::Response;
 use tungstenite::http::{Uri};
 use tungstenite::protocol::CloseFrame;
 
+// TODO: Refactor clients and structs/enums to separate files
 // TODO: Use custom Error type for API
+// TODO: Custom Error Type for API
+// TODO  Socket Unthreading, e.g. split socket into read/write halves or unthread read instead of using Arc<Mutex<>>
+// TODO: Optional timeout for blocking socket
+// TODO: Add Tests
+// TODO: Add API Documentation
+// TODO: Add Code Documentation
 
 macro_rules! send_or_break {
     ($sender:expr, $context:expr, $event:expr) => {
@@ -396,7 +403,7 @@ impl S9BlockingWebSocketClient{
                     }
                 }
             }
-            
+
             let msg = match self.socket.read() {
                 Ok(msg) => msg,
                 Err(e) => {
