@@ -172,6 +172,11 @@ impl S9NonBlockingWebSocketClient {
             _ => {}
         }
 
+        let spin_wait_duration: Option<Duration> = match non_blocking_strategy {
+            NonBlockingStrategy::SpinNonBlocking(spin_wait_duration) => spin_wait_duration,
+            NonBlockingStrategy::SpinBlockingWithTimeout(_, spin_wait_duration) => spin_wait_duration,
+        };
+
         thread::spawn(move || {
             if tracing::enabled!(tracing::Level::DEBUG) {
                 tracing::debug!("Starting WebSocket non-blocking event loop thread started");
@@ -192,7 +197,7 @@ impl S9NonBlockingWebSocketClient {
                         let mut sock = socket_reader.lock().unwrap(); // TODO: Handle error using crossbeam-channel or similar
                         sock.read()
                     };
-                    let should_send = match non_blocking_strategy {
+                    let notify_on_socket_err = match non_blocking_strategy {
                         NonBlockingStrategy::SpinNonBlocking(_) => {
                             match &msg {
                                 Err(Error::Io(io_err)) if io_err.kind() == std::io::ErrorKind::WouldBlock => {
@@ -212,7 +217,7 @@ impl S9NonBlockingWebSocketClient {
                         }
                     };
 
-                    if should_send {
+                    if notify_on_socket_err {
                         let should_break = msg.is_err();
                         if socket_tx.send(msg).is_err() {
                             // Main thread has dropped, exit
@@ -223,8 +228,9 @@ impl S9NonBlockingWebSocketClient {
                             break;
                         }
                     } else {
-                        // Sleep for a while to avoid busy spin
-                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        if let Some(duration) = spin_wait_duration {
+                            thread::sleep(duration);
+                        }
                     }
                 }
             });
