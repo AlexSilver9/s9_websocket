@@ -12,6 +12,7 @@ use tungstenite::protocol::CloseFrame;
 
 // TODO: add non-blocking, idea: https://github.com/haxpor/bybit-shiprekt/blob/6c3c5693d675fc997ce5e76df27e571f2aaaf291/src/main.rs
 
+// TODO: use same type of Err or use custon Error type
 macro_rules! send_or_break {
     ($sender:expr, $context:expr, $event:expr) => {
         if let Err(e) = $sender.send($event) {
@@ -130,10 +131,14 @@ impl S9NonBlockingWebSocketClient {
     }
 
     #[inline]
-    pub fn run_non_blocking(&mut self, non_blocking_options: NonBlockingOptions) {
+    pub fn run_non_blocking(&mut self, non_blocking_options: NonBlockingOptions) -> Result<(), Box<dyn std::error::Error>> {
         // Take ownership of the socket by replacing it with a dummy value
         // This is safe because we'll never use the original socket again after spawning
-        let mut socket = self.socket.take().expect("Socket already moved to thread"); // TODO Throw Err
+        let mut socket = self.socket.take();
+        let mut socket = match socket {
+            Some(s) => s,
+            None => return Err("Socket already moved to thread".into())
+        };
         let control_rx = self.control_rx.clone();
         let event_tx = self.event_tx.clone();
 
@@ -144,14 +149,17 @@ impl S9NonBlockingWebSocketClient {
         // Set underlying streams to pure non-blocking or fake non-blocking with timeout
         match socket.get_mut() {
             MaybeTlsStream::Plain(stream) => {
-                Self::set_non_blocking_mode(stream);
+                stream.set_nonblocking(true)?;
+                stream.set_nodelay(true)?;
             },
             MaybeTlsStream::NativeTls(stream) => {
-                Self::set_non_blocking_mode(stream.get_mut());
+                stream.get_mut().set_nonblocking(true)?;
+                stream.get_mut().set_nodelay(true)?;
             },
             /*#[cfg(feature = "rustls")]
             MaybeTlsStream::Rustls(stream) => {
-                Self::set_non_blocking_mode(&non_blocking_strategy, stream.get_mut());
+                stream.get_mut().set_nonblocking(true)?;
+                stream.get_mut().set_nodelay(true)?;
             },*/
             _ => {}
         }
@@ -289,11 +297,7 @@ impl S9NonBlockingWebSocketClient {
                 }
             }
         });
-    }
-
-    fn set_non_blocking_mode(stream: &mut TcpStream) {
-        stream.set_nonblocking(true).ok();
-        stream.set_nodelay(true).ok();
+        Ok(())
     }
 
     pub fn send_text_message(&mut self, s: &str) -> Result<(), SendError<ControlMessage>> {
