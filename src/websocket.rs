@@ -70,30 +70,25 @@ pub enum NonBlockingStrategy {
 }
 
 impl NonBlockingStrategy {
-    pub fn new_non_blocking_strategy() -> Self {
-        NonBlockingStrategy::SpinNonBlocking(None)
-    }
-
-    pub fn new_non_blocking_strategy_with_spin_waiting(spin_wait_duration: Duration) -> Result<Self, String> {
-        if spin_wait_duration.is_zero() {
-            return Err("Spin wait duration cannot be zero".to_string());
+    pub fn new_non_blocking_strategy(spin_wait_duration: Option<Duration>) -> Result<Self, String> {
+        if let Some(duration) = spin_wait_duration {
+            if duration.is_zero() {
+                return Err("Spin wait duration cannot be zero".to_string());
+            }
         }
-        Ok(NonBlockingStrategy::SpinNonBlocking(None))
+        Ok(NonBlockingStrategy::SpinNonBlocking(spin_wait_duration))
     }
 
     pub fn new_timeout_strategy(timeout_duration: Duration, spin_wait_duration: Option<Duration>) -> Result<Self, String> {
         if timeout_duration.is_zero() {
             return Err("Timeout duration cannot be zero".to_string());
         }
-        match spin_wait_duration {
-            Some(duration) => {
-                if duration.is_zero() {
-                    return Err("Spin wait duration cannot be zero".to_string());
-                }
-                Ok(NonBlockingStrategy::SpinBlockingWithTimeout(duration, Some(duration)))
-            },
-            None => Ok(NonBlockingStrategy::SpinBlockingWithTimeout(timeout_duration, None)),
+        if let Some(duration) = spin_wait_duration {
+            if duration.is_zero() {
+                return Err("Spin wait duration cannot be zero".to_string());
+            }
         }
+        Ok(NonBlockingStrategy::SpinBlockingWithTimeout(timeout_duration, spin_wait_duration))
     }
 }
 
