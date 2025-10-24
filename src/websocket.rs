@@ -164,12 +164,12 @@ impl S9NonBlockingWebSocketClient {
 
             thread::spawn(move || {
                 loop {
-                    /// Socket reader thread loop:
-                    /// 1. Acquires mutex lock and reads from WebSocket
-                    /// 2. Filters WouldBlock errors (normal in non-blocking mode)
-                    /// 3. Forwards valid messages/errors to main event loop via channel
-                    /// 4. Breaks loop on read errors or if main thread disconnects
-                    /// 5. Sleeps between iterations if spin_wait_duration is configured
+                    // Socket reader thread loop:
+                    // 1. Acquires mutex lock and reads from WebSocket
+                    // 2. Filters WouldBlock errors (normal in non-blocking mode)
+                    // 3. Forwards valid messages/errors to main event loop via channel
+                    // 4. Breaks loop on read errors or if main thread disconnects
+                    // 5. Sleeps between iterations if spin_wait_duration is configured
 
                     let msg = {
                         // Acquire lock on shared socket, exit thread if poisoned
@@ -177,7 +177,7 @@ impl S9NonBlockingWebSocketClient {
                         let mut sock = match sock {
                             Ok(sock) => sock,
                             Err(e) => {
-                                send_or_log!(event_tx_for_socket_thread, "Mutex", WebSocketEvent::Error(format!("Failed to aquire lock for socket for reading: {}", result.unwrap_err())));
+                                send_or_log!(event_tx_for_socket_thread, "Mutex", WebSocketEvent::Error(format!("Failed to aquire lock for socket for reading: {}", e)));
                                 return;
                             }
                         };
