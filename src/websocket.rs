@@ -16,7 +16,7 @@ use tungstenite::protocol::CloseFrame;
 // TODO  Socket Unthreading, e.g. split socket into read/write halves or unthread read instead of using Arc<Mutex<>>
 // TODO: Optional timeout for blocking socket
 // TODO: Add Tests
-// TODO: Add API Documentation
+// TODO: Add API Documentation + change documentation pointer in Cargo.toml to something like https://docs.rs/s9_websocket/0.0.1
 // TODO: Add Code Documentation
 
 macro_rules! send_or_break {
