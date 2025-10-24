@@ -79,16 +79,16 @@ impl NonBlockingStrategy {
         Ok(NonBlockingStrategy::SpinNonBlocking(spin_wait_duration))
     }
 
-    pub fn new_timeout_strategy(timeout_duration: Duration, spin_wait_duration: Option<Duration>) -> Result<Self, String> {
-        if timeout_duration.is_zero() {
-            return Err("Timeout duration cannot be zero".to_string());
+    pub fn new_timeout_strategy(socket_read_timeout: Duration, spin_wait_duration: Option<Duration>) -> Result<Self, String> {
+        if socket_read_timeout.is_zero() {
+            return Err("Timeout cannot be zero".to_string());
         }
         if let Some(duration) = spin_wait_duration {
             if duration.is_zero() {
                 return Err("Spin wait duration cannot be zero".to_string());
             }
         }
-        Ok(NonBlockingStrategy::SpinBlockingWithTimeout(timeout_duration, spin_wait_duration))
+        Ok(NonBlockingStrategy::SpinBlockingWithTimeout(socket_read_timeout, spin_wait_duration))
     }
 }
 
@@ -328,8 +328,8 @@ impl S9NonBlockingWebSocketClient {
                 stream.set_nonblocking(true).ok();
                 stream.set_nodelay(true).ok();
             },
-            NonBlockingStrategy::SpinBlockingWithTimeout(timeout_duration, _) => {
-                stream.set_read_timeout(Some(*timeout_duration)).ok();
+            NonBlockingStrategy::SpinBlockingWithTimeout(socket_read_timeout, _) => {
+                stream.set_read_timeout(Some(*socket_read_timeout)).ok();
                 stream.set_nonblocking(false).ok();
                 stream.set_nodelay(true).ok();
             }
