@@ -76,7 +76,7 @@ impl NonBlockingStrategy {
 
     pub fn new_non_blocking_strategy_with_spin_waiting(spin_wait_duration: Duration) -> Result<Self, String> {
         if spin_wait_duration.is_zero() {
-            return Err("Spin wain duration cannot be zero".to_string());
+            return Err("Spin wait duration cannot be zero".to_string());
         }
         Ok(NonBlockingStrategy::SpinNonBlocking(None))
     }
@@ -88,7 +88,7 @@ impl NonBlockingStrategy {
         match spin_wait_duration {
             Some(duration) => {
                 if duration.is_zero() {
-                    return Err("Spin wain duration cannot be zero".to_string());
+                    return Err("Spin wait duration cannot be zero".to_string());
                 }
                 Ok(NonBlockingStrategy::SpinBlockingWithTimeout(duration, Some(duration)))
             },
@@ -227,10 +227,10 @@ impl S9NonBlockingWebSocketClient {
                         if should_break {
                             break;
                         }
-                    } else {
-                        if let Some(duration) = spin_wait_duration {
-                            thread::sleep(duration);
-                        }
+                    }
+
+                    if let Some(duration) = spin_wait_duration {
+                        thread::sleep(duration);
                     }
                 }
             });
