@@ -63,6 +63,7 @@ pub enum ControlMessage {
     ForceQuit(),
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum NonBlockingStrategy {
     SpinNonBlocking(Option<Duration>),
     SpinBlockingWithTimeout(Duration, Option<Duration>),
@@ -185,21 +186,30 @@ impl S9NonBlockingWebSocketClient {
             let (socket_tx, socket_rx) = unbounded::<Result<Message, Error>>();
 
             thread::spawn(move || {
+                let non_blocking_strategy = non_blocking_strategy.clone();
                 loop {
                     let msg = {
                         let mut sock = socket_reader.lock().unwrap(); // TODO: Handle error using crossbeam-channel or similar
                         sock.read()
                     };
-                    let should_send = match &msg {
-                        Err(Error::Io(io_err)) if io_err.kind() == std::io::ErrorKind::WouldBlock => {
-                            // This is expected for non-blocking sockets, don't send or break
-                            false
+                    let should_send = match non_blocking_strategy {
+                        NonBlockingStrategy::SpinNonBlocking(_) => {
+                            match &msg {
+                                Err(Error::Io(io_err)) if io_err.kind() == std::io::ErrorKind::WouldBlock => {
+                                    false // Expected for non-blocking sockets, don't send or break
+                                },
+                                _ => true
+                            }
                         },
-                        Err(Error::Io(io_err)) if io_err.kind() == std::io::ErrorKind::TimedOut => {
-                            // This is expected for non-blocking sockets, don't send or break
-                            false
+                        NonBlockingStrategy::SpinBlockingWithTimeout(_, _) => {
+                            match &msg {
+                                Err(Error::Io(io_err)) if io_err.kind() == std::io::ErrorKind::TimedOut => {
+                                    // Expected for timeout sockets, don't send or break
+                                    false
+                                },
+                                _ => true
+                            }
                         }
-                        _ => true
                     };
 
                     if should_send {
