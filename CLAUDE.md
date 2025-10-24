@@ -1,4 +1,4 @@
-# S9 WebSocket Project - AI Assistant Guide
+# Silver9 WebSocket Project - AI Assistant Guide
 
 ## Project Overview
 s9_websocket is a lightweight library implementation for blocking and non-blocking stream-based WebSocket client.
@@ -140,3 +140,12 @@ For Secure WebSockets the TLS features currently only native-tls supported.
 
 ## Known Issues & Gotchas
 - None
+
+## License
+This project is licensed under the APACHE and MIT License - see the LICENSE files for details.
+
+## Project URL
+Project source code is at https://github.com/AlexSilver9/s9_websocket.
+
+## Authors
+Alexander Silvennoinen
