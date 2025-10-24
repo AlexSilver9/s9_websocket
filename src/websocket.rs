@@ -99,34 +99,26 @@ impl S9NonBlockingWebSocketClient {
     }
 
     pub fn connect_with_headers(uri: &str, headers: &HashMap<String, String>) -> Result<S9NonBlockingWebSocketClient, Error> {
-        let uri = match get_uri(uri) {
-            Ok(value) => value,
-            Err(error) => return Err(error),
-        };
+        let uri = get_uri(uri)?;
 
         let mut builder = ClientRequestBuilder::new(uri);
         for (key, value) in headers {
             builder = builder.with_header(key, value);
         }
 
-        let result = tungstenite::connect(builder);
-        match result {
-            Ok((sock, response)) => {
-                trace_on_connected(response);
+        let (sock, response) = tungstenite::connect(builder)?;
+        trace_on_connected(response);
 
-                let (control_tx, control_rx) = unbounded::<ControlMessage>();
-                let (event_tx, event_rx) = unbounded::<WebSocketEvent>();
+        let (control_tx, control_rx) = unbounded::<ControlMessage>();
+        let (event_tx, event_rx) = unbounded::<WebSocketEvent>();
 
-                Ok(S9NonBlockingWebSocketClient {
-                    socket: Some(sock),
-                    control_tx,
-                    control_rx,
-                    event_tx,
-                    event_rx
-                })
-            },
-            Err(e) => Err(e)
-        }
+        Ok(S9NonBlockingWebSocketClient {
+            socket: Some(sock),
+            control_tx,
+            control_rx,
+            event_tx,
+            event_rx
+        })
     }
 
     #[inline]
@@ -171,16 +163,12 @@ impl S9NonBlockingWebSocketClient {
                     // 4. Breaks loop on read errors or if main thread disconnects
                     // 5. Sleeps between iterations if spin_wait_duration is configured
 
-                    let msg = {
-                        // Acquire lock on shared socket, exit thread if poisoned
-                        let mut sock = match socket_reader.lock() {
-                            Ok(sock) => sock,
-                            Err(e) => {
-                                send_or_log!(event_tx_for_socket_thread, "Mutex::Lock", WebSocketEvent::Error(format!("Failed to aquire lock for socket read: {}", e)));
-                                return;
-                            }
-                        };
-                        sock.read()
+                    let msg = match socket_reader.lock() {
+                        Ok(mut sock) => sock.read(),
+                        Err(e) => {
+                            send_or_log!(event_tx_for_socket_thread, "Mutex::Lock", WebSocketEvent::Error(format!("Failed to aquire lock for socket read: {}", e)));
+                            return;
+                        }
                     };
 
                     // Filter out WouldBlock errors (expected in non-blocking mode)
@@ -337,47 +325,29 @@ impl S9NonBlockingWebSocketClient {
         Ok(())
     }
 
+    #[inline]
     pub fn send_text_message(&mut self, s: &str) -> Result<(), SendError<ControlMessage>> {
         let result = self.control_tx.send(ControlMessage::SendText(s.to_string()));
-        match result {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                tracing::error!("S9NonBlockingWebSocketClient failed to send context {} through crossbeam channel: {}", "ControlMessage::SendText", e);
-                Err(e)
-            }
+        if let Err(ref e) = result {
+            tracing::error!("S9NonBlockingWebSocketClient failed to send context {} through crossbeam channel: {}", "ControlMessage::SendText", e);
         }
+        result
     }
 }
 
+#[inline]
 fn send_text_message_to_websocket(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>, s: &str, client_name: &str) -> Result<(), Error> {
-    let msg = Message::text(s);
-    let send_result = socket.send(msg);
-    match send_result {
-        Ok(()) => {
+    socket.send(Message::text(s))
+        .map(|_| {
             if tracing::enabled!(tracing::Level::TRACE) {
-                tracing::trace!("{} sent text message: {}", client_name, String::from(s));
+                tracing::trace!("{} sent text message: {}", client_name, s);
             }
-            Ok(())
-        },
-        Err(e) => {
-            tracing::error!("{} error sending text message: {}", client_name, e);
-            Err(e)
-        }
-    }
+        })
+        .inspect_err(|e| tracing::error!("{} error sending text message: {}", client_name, e))
 }
 
 fn close_websocket(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>, client_name: &str) {
-    if socket.can_read() {
-        let close_result = socket.close(None);
-        match close_result {
-            Ok(_) => {
-                tracing::trace!("{} connection close requested", client_name);
-            },
-            Err(e) => {
-                tracing::error!("{} error on connection close request: {}", client_name, e);
-            }
-        }
-    }
+    close_websocket_with_logging(socket, client_name, "on close");
 }
 
 impl S9BlockingWebSocketClient{
@@ -386,26 +356,19 @@ impl S9BlockingWebSocketClient{
     }
 
     pub fn connect_with_headers(uri: &str, headers: &HashMap<String, String>) -> Result<S9BlockingWebSocketClient, Error> {
-        let uri = match get_uri(uri) {
-            Ok(value) => value,
-            Err(error) => return Err(error),
-        };
+        let uri = get_uri(uri)?;
 
         let mut builder = ClientRequestBuilder::new(uri);
         for (key, value) in headers {
             builder = builder.with_header(key, value);
         }
 
-        let result = tungstenite::connect(builder);
-        match result {
-            Ok((sock, response)) => {
-                trace_on_connected(response);
-                Ok(S9BlockingWebSocketClient {
-                    socket: sock,
-                })
-            },
-            Err(e) => Err(e)
-        }
+        let (sock, response) = tungstenite::connect(builder)?;
+        trace_on_connected(response);
+
+        Ok(S9BlockingWebSocketClient {
+            socket: sock,
+        })
     }
 
     #[inline]
@@ -422,7 +385,7 @@ impl S9BlockingWebSocketClient{
                         }
                     },
                     ControlMessage::Close() => {
-                        self.close();
+                        close_websocket_with_logging(&mut self.socket, "S9BlockingWebSocketClient", "on close");
                     },
                     ControlMessage::ForceQuit() => {
                         if tracing::enabled!(tracing::Level::TRACE) {
@@ -433,7 +396,7 @@ impl S9BlockingWebSocketClient{
                     }
                 }
             }
-
+            
             let msg = match self.socket.read() {
                 Ok(msg) => msg,
                 Err(e) => {
@@ -489,60 +452,30 @@ impl S9BlockingWebSocketClient{
 
     #[inline]
     pub fn send_text_pong_for_text_ping(&mut self, ping_message: &str) -> Result<(), Error> {
-        let mut pong = String::with_capacity(ping_message.len());
-        pong.push_str(&ping_message[..3]);
-        pong.push('o');
-        pong.push_str(&ping_message[4..]);
-        self.send_text_message_to_websocket(pong.as_str())
+        let pong = ping_message.replacen("ping", "pong", 1);
+        self.send_text_message_to_websocket(&pong)
     }
 
-    #[inline]
     pub fn send_text_message(&mut self, s: &str) -> Result<(), Error> {
         self.send_text_message_to_websocket(s)
     }
 
-    #[inline]
     fn send_text_message_to_websocket(&mut self, s: &str) -> Result<(), Error> {
-        let msg = Message::text(s);
-        let send_result = self.socket.send(msg);
-        match send_result {
-            Ok(()) => {
+        self.socket.send(Message::text(s))
+            .map(|_| {
                 if tracing::enabled!(tracing::Level::TRACE) {
-                    tracing::trace!("S9BlockingWebSocketClient sent text message: {}", String::from(s));
+                    tracing::trace!("S9BlockingWebSocketClient sent text message: {}", s);
                 }
-                Ok(())
-            },
-            Err(e) => {
-                tracing::error!("S9BlockingWebSocketClient error sending text message: {}", e);
-                Err(e)
-            }
-        }
-    }
-
-    pub fn close(&mut self) {
-        if self.socket.can_read() {
-            let close_result = self.socket.close(None);
-            match close_result {
-                Ok(_) => {
-                    tracing::trace!("S9BlockingWebSocketClient connection close requested");
-                },
-                Err(e) => {
-                    tracing::error!("S9BlockingWebSocketClient error on connection close request: {}", e);
-                }
-            }
-        }
+            })
+            .inspect_err(|e| tracing::error!("S9BlockingWebSocketClient error sending text message: {}", e))
     }
 }
 
 fn get_uri(uri: &str) -> Result<Uri, Error> {
-    let uri: Uri = match Uri::from_str(uri) {
-        Ok(uri) => uri,
-        Err(e) => {
-            tracing::error!("S9WebSocketClient error connecting to invalid URI: {}", uri);
-            return Err(Error::from(e));
-        }
-    };
-    Ok(uri)
+    Uri::from_str(uri).map_err(|e| {
+        tracing::error!("S9WebSocketClient error connecting to invalid URI: {}", uri);
+        Error::from(e)
+    })
 }
 
 fn trace_on_connected(response: Response) {
@@ -556,14 +489,12 @@ fn trace_on_connected(response: Response) {
     }
 }
 
-#[inline]
 fn trace_on_text_message(message: &Utf8Bytes) {
     if tracing::enabled!(tracing::Level::TRACE) {
         tracing::trace!("S9WebSocketClient received text message: {}", message);
     }
 }
 
-#[inline]
 fn trace_on_binary_message(bytes: &Bytes) {
     if tracing::enabled!(tracing::Level::TRACE) {
         tracing::trace!("S9WebSocketClient received binary message: {:?}", bytes);
@@ -583,36 +514,26 @@ fn trace_on_close(close_frame: &Option<CloseFrame>) {
     }
 }
 
+fn close_websocket_with_logging(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>, client_name: &str, context: &str) {
+    socket.close(None)
+        .map(|_| {
+            tracing::trace!("{} connection close successfully requested {}", client_name, context);
+        })
+        .unwrap_or_else(|e| {
+            tracing::error!("{} error on connection close request {}: {}", client_name, context, e);
+        });
+}
+
 impl Drop for S9NonBlockingWebSocketClient {
     fn drop(&mut self) {
         if let Some(socket) = &mut self.socket {
-            if socket.can_read() {
-                let close_result = socket.close(None);
-                match close_result {
-                    Ok(_) => {
-                        tracing::trace!("S9NonBlockingWebSocketClient connection close successfully requested on Drop");
-                    },
-                    Err(e) => {
-                        tracing::error!("S9NonBlockingWebSocketClient error on connection close request on Drop: {}", e);
-                    }
-                }
-            }
+            close_websocket_with_logging(socket, "S9NonBlockingWebSocketClient", "on Drop");
         }
     }
 }
 
 impl Drop for S9BlockingWebSocketClient {
     fn drop(&mut self) {
-        if self.socket.can_read() {
-            let close_result = self.socket.close(None);
-            match close_result {
-                Ok(_) => {
-                    tracing::trace!("S9BlockingWebSocketClient connection close successfully requested on Drop");
-                },
-                Err(e) => {
-                    tracing::error!("S9BlockingWebSocketClient error on connection close request on Drop: {}", e);
-                }
-            }
-        }
+        close_websocket_with_logging(&mut self.socket, "S9BlockingWebSocketClient", "on Drop");
     }
 }

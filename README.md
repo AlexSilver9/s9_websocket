@@ -4,7 +4,7 @@ A high-performance Rust WebSocket client library providing both blocking and non
 
 ## Features
 
-- 🚀 **Blocking and Non-blocking modes** - Choose the right approach for your use case
+- 🚀 **Non-blocking and blocking modes** - Choose the right approach for your use case
 - ⚡ **Low latency** - TCP_NODELAY enabled by default for Non-blocking
 - 🔒 **Multiple TLS backends** - Support for both native-tls and rustls
 - 📡 **Event-driven architecture** - Clean separation of concerns with channels
@@ -35,7 +35,7 @@ use std::time::Duration;
 // Connect to WebSocket server
 let mut client = S9NonBlockingWebSocketClient::connect("wss://example.com/ws")?;
 
-// Configure non-blocking options
+// Configure non-blocking options, duration of None means full cpu power busy spin loop
 let options = NonBlockingOptions::new(Some(Duration::from_millis(10)))?;
 
 // Start the event loop in a separate thread
@@ -43,6 +43,21 @@ client.run_non_blocking(options)?;
 
 // Send a message
 client.send_text_message("Hello, WebSocket!")?;
+
+// Send another message from another thread and close the connection
+let tx = client.control_tx.clone();
+std::thread::spawn(move || {
+    std::thread::sleep(Duration::from_millis(10));
+
+    // Send a message via control channel 
+    tx.send(ControlMessage::SendText("I'll close in 5 sec!".to_string())).ok();
+
+    std::thread::sleep(Duration::from_millis(5));
+
+    // Optionally close connection - gracefull close is implemented on Drop
+    tx.send(ControlMessage::Close())?;
+});
+
 
 // Handle events
 loop {
@@ -59,7 +74,7 @@ loop {
         },
         Ok(WebSocketEvent::ConnectionClosed(reason)) => {
             println!("Connection closed: {:?}", reason);
-            break;
+            // No need to beak as client sends another Quit message
         },
         Ok(WebSocketEvent::Error(err)) => {
             eprintln!("Error: {}", err);
@@ -71,12 +86,11 @@ loop {
         _ => {}
     }
 }
-
-// Close connection gracefully
-client.control_tx.send(ControlMessage::Close())?;
 ```
 
 ### Blocking Client
+
+**GOTCHA**: For now the Blocking client blocks on socket read infinitly. See Limitations.
 
 ```rust
 use s9_websocket::{S9BlockingWebSocketClient, S9WebSocketClientHandler};
@@ -167,6 +181,13 @@ let options = NonBlockingOptions::new(Some(Duration::from_millis(100)))?;
 
 ### S9NonBlockingWebSocketClient
 
+#### Key Features
+- Event-based communication via channels
+- Separate reader thread for socket operations
+- Configurable spin-wait duration to reduce CPU usage
+- Control messages for sending data and managing connection
+- Suitable for high-performance applications
+
 #### Methods
 - `connect(uri: &str) -> Result<Self, Error>` - Connect to WebSocket server
 - `connect_with_headers(uri: &str, headers: &HashMap<String, String>) -> Result<Self, Error>` - Connect with custom headers
@@ -177,7 +198,34 @@ let options = NonBlockingOptions::new(Some(Duration::from_millis(100)))?;
 - `control_tx: Sender<ControlMessage>` - Send control messages to the client
 - `event_rx: Receiver<WebSocketEvent>` - Receive events from the client
 
+#### WebSocketEvent
+```rust
+pub enum WebSocketEvent {
+    Activated,                         // The socket and control channel poll loop is entered after this message
+    TextMessage(Vec<u8>),              // Text message received
+    BinaryMessage(Vec<u8>),            // Binary message received
+    Ping(Vec<u8>),                     // Ping frame received
+    Pong(Vec<u8>),                     // Pong frame received
+    ConnectionClosed(Option<String>),  // Connection closing - received a Close Frame
+    Error(String),                     // Error occurred
+    Quit,                              // Client quitting
+}
+```
+
+
 ### S9BlockingWebSocketClient
+
+#### Key Features
+- Simple synchronous API
+- Blocking socket read means, message send and control message will only be executed after at least a WebSocket Frame got read
+- Handler trait for event callbacks
+- Direct control flow
+- Suitable for simple use cases or when blocking is acceptable
+
+#### Limitations
+- For now the Blocking client blocks on socket read infinitly.
+That means that send messages and processing control messages will only be performed after a WebSocket Frame got read.
+This is target of future improvement, by adding support for a read timeout.
 
 #### Methods
 - `connect(uri: &str) -> Result<Self, Error>` - Connect to WebSocket server
@@ -185,19 +233,23 @@ let options = NonBlockingOptions::new(Some(Duration::from_millis(100)))?;
 - `run_blocking<HANDLER>(handler: &mut HANDLER, control_rx: Receiver<ControlMessage>)` - Run blocking event loop
 - `send_text_message(s: &str) -> Result<(), Error>` - Send text message
 - `send_text_pong_for_text_ping(ping_message: &str) -> Result<(), Error>` - Send pong response for text ping
-- `close()` - Close the connection
 
-### WebSocketEvent
+#### Callback
 ```rust
-pub enum WebSocketEvent {
-    Activated,                          // Connection established
-    TextMessage(Vec<u8>),              // Text message received
-    BinaryMessage(Vec<u8>),            // Binary message received
-    Ping(Vec<u8>),                     // Ping frame received
-    Pong(Vec<u8>),                     // Pong frame received
-    ConnectionClosed(Option<String>),  // Connection closed
-    Error(String),                     // Error occurred
-    Quit,                              // Client quit
+pub trait S9WebSocketClientHandler {
+   fn on_text_message(&mut self, data: &[u8]);                  // Text message received
+   fn on_binary_message(&mut self, data: &[u8]);                // Binary message received
+   fn on_connection_closed(&mut self, reason: Option<String>);  // Connection closing - received a Close Frame
+   fn on_error(&mut self, error: String);                       // Error occurred
+   fn on_ping(&mut self, _data: &[u8]) {                        // Ping frame received
+      // Default: noop
+   }
+   fn on_pong(&mut self, _data: &[u8]) {                        // Pong frame received
+      // Default: noop
+   }
+   fn on_quit(&mut self) {                                      // Client quitting
+      // Default: noop
+   }
 }
 ```
 
@@ -205,10 +257,19 @@ pub enum WebSocketEvent {
 ```rust
 pub enum ControlMessage {
     SendText(String),  // Send text message
-    Close(),           // Close connection gracefully
-    ForceQuit(),       // Force quit immediately
+    Close(),           // Close connection gracefully - sends a Close Frame
+    ForceQuit(),       // Force quit - immediately break the socket and control channel poll loop
 }
 ```
+
+### Close and Quit
+Graceful close is implemented by `Drop` trait. Graceful close means a Close Frame is sent to the server.
+Whenever a Close frame is received from the server
+- **non-blocking**: a `WebSocketEvent::ConnectionClosed` is published, followed by a `WebSocketEvent::Quit` event before breaking the socket and control channel poll loop
+- **blocking**: the `S9WebSocketClientHandler::on_connection_closed()` callback is invoked, followed by a `S9WebSocketClientHandler::on_quit()` call before breaking the socket and control channel poll loop
+
+### Force Quit
+Send a 'ControlMessage::ForceQuit' to immediatelly break the socket and control channel poll loop
 
 ## Logging
 The library uses the 'tracing' crate for logging. Enable logging in your application:

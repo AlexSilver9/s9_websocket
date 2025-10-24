@@ -39,6 +39,7 @@ The **S9BlockingWebSocketClient** blocking implementation is runs on the caller'
 
 ### Blocking Client
 - Simple synchronous API
+- Blocking socket read means, message send and control message will only be executed after at least a WebSocket Frame got read 
 - Handler trait for event callbacks
 - Direct control flow
 - Suitable for simple use cases or when blocking is acceptable
@@ -129,13 +130,14 @@ For Secure WebSockets the TLS features currently only native-tls supported.
 ## Known Limitations & TODOs
 1. **Custom Error Type**: Need unified error handling (see TODO in code)
 2. **Socket Unthreading**: Would prefer to e.g. split socket into read/write halves or unthread read instead of using Arc<Mutex<>>
-3. **Error Handling in Threads**: Some unwrap() calls in thread code should be handled more gracefully
+3. **Blocking Timeout**: Blocking socket should support optional timeout. For now message send and control message will only be processed after at least a WebSocket Frame got read.
 4. **Tests**: Currently no tests are written
-5. **API Documentation: Currently no API documentation is written
-6. **Code Documentation: Currently no code documentation is written
+5. **API Documentation**: Currently no API documentation is written
+6. **Code Documentation**: Currently no code documentation is written
 
 ## Future Improvements
 1. Implement custom error type for better error handling
+2. Add support for socket read timeout for blocking socket
 2. Add support for rustls
 3. Add tests
 4. Add API documentation
