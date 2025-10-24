@@ -81,7 +81,7 @@ impl NonBlockingStrategy {
 
     pub fn new_timeout_strategy(socket_read_timeout: Duration, spin_wait_duration: Option<Duration>) -> Result<Self, String> {
         if socket_read_timeout.is_zero() {
-            return Err("Timeout cannot be zero".to_string());
+            return Err("Socket read timeout cannot be zero".to_string());
         }
         if let Some(duration) = spin_wait_duration {
             if duration.is_zero() {
