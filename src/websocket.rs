@@ -140,7 +140,6 @@ impl S9NonBlockingWebSocketClient {
                     let msg = {
                         let mut sock = socket_reader.lock().unwrap(); // TODO: Handle error using crossbeam-channel or similar
                         // Set read timeout on the underlying TCP stream
-                        // Set read timeout on the underlying TCP stream
                         match sock.get_mut() {
                             MaybeTlsStream::Plain(stream) => {
                                 //stream.set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
@@ -150,24 +149,36 @@ impl S9NonBlockingWebSocketClient {
                                 //stream.get_mut().set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
                                 stream.get_mut().set_nonblocking(true).ok();
                             },
-                            #[cfg(feature = "rustls")]
+                            /*#[cfg(feature = "rustls")]
                             MaybeTlsStream::Rustls(stream) => {
                                 stream.get_mut().set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
-                            },
+                            },*/
                             _ => {}
                         }
                         sock.read()
                     };
-                    let should_break = msg.is_err();
+                    let should_send = match &msg {
+                        Err(Error::Io(io_err)) if io_err.kind() == std::io::ErrorKind::WouldBlock => {
+                            // This is expected for non-blocking sockets, don't send or break
+                            false
+                        },
+                        Err(Error::Io(io_err)) if io_err.kind() == std::io::ErrorKind::TimedOut => {
+                            // This is expected for non-blocking sockets, don't send or break
+                            false
+                        }
+                        _ => true
+                    };
 
-                    if socket_tx.send(msg).is_err() {
-                        // Main thread has dropped, exit
-                        // TODO: Maybe handle error using crossbeam-channel or similar
-                        break;
-                    }
-
-                    if should_break {
-                        break;
+                    if should_send {
+                        let should_break = msg.is_err();
+                        if socket_tx.send(msg).is_err() {
+                            // Main thread has dropped, exit
+                            // TODO: Maybe handle error using crossbeam-channel or similar
+                            break;
+                        }
+                        if should_break {
+                            break;
+                        }
                     }
                 }
             });
