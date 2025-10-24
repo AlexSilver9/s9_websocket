@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::net::TcpStream;
 use std::{str, thread};
 use std::str::FromStr;
+use std::time::Duration;
 use crossbeam_channel::{select, unbounded, Receiver, SendError, Sender};
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Bytes, ClientRequestBuilder, Error, Message, Utf8Bytes, WebSocket};
@@ -62,6 +63,40 @@ pub enum ControlMessage {
     ForceQuit(),
 }
 
+pub enum NonBlockingStrategy {
+    SpinNonBlocking(Option<Duration>),
+    SpinBlockingWithTimeout(Duration, Option<Duration>),
+}
+
+impl NonBlockingStrategy {
+    pub fn new_non_blocking_strategy(busy_spin_wait_duration: Option<Duration>) -> Result<Self, String> {
+        match busy_spin_wait_duration {
+            Some(duration) => {
+                if duration.is_zero() {
+                    return Err("Busy spin wain duration cannot be zero".to_string());
+                }
+                Ok(NonBlockingStrategy::SpinNonBlocking(Some(duration)))
+            },
+            None => Ok(NonBlockingStrategy::SpinNonBlocking(None)),
+        }
+    }
+
+    pub fn new_timeout_strategy(timeout_duration: Duration, busy_spin_wait_duration: Option<Duration>) -> Result<Self, String> {
+        if timeout_duration.is_zero() {
+            return Err("Timeout duration cannot be zero".to_string());
+        }
+        match busy_spin_wait_duration {
+            Some(duration) => {
+                if duration.is_zero() {
+                    return Err("Busy spin wain duration cannot be zero".to_string());
+                }
+                Ok(NonBlockingStrategy::SpinBlockingWithTimeout(duration, Some(duration)))
+            },
+            None => Ok(NonBlockingStrategy::SpinBlockingWithTimeout(timeout_duration, None)),
+        }
+    }
+}
+
 pub struct S9NonBlockingWebSocketClient {
     socket: Option<WebSocket<MaybeTlsStream<TcpStream>>>,
     pub control_tx: Sender<ControlMessage>,
@@ -114,12 +149,30 @@ impl S9NonBlockingWebSocketClient {
     pub fn run_non_blocking(&mut self) {
         // Take ownership of the socket by replacing it with a dummy value
         // This is safe because we'll never use the original socket again after spawning
-        let socket = self.socket.take().expect("Socket already moved to thread"); // TODO Throw Err
+        let mut socket = self.socket.take().expect("Socket already moved to thread"); // TODO Throw Err
         let control_rx = self.control_rx.clone();
         let event_tx = self.event_tx.clone();
 
         if tracing::enabled!(tracing::Level::DEBUG) {
             tracing::debug!("Starting WebSocket non-blocking event loop thread...");
+        }
+
+        // Set underlying streams to pure non-blocking or fake non-blocking with timeout
+        match socket.get_mut() {
+            MaybeTlsStream::Plain(stream) => {
+                stream.set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
+                stream.set_nonblocking(true).ok();
+            },
+            MaybeTlsStream::NativeTls(stream) => {
+                stream.get_mut().set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
+                stream.get_mut().set_nonblocking(true).ok();
+            },
+            /*#[cfg(feature = "rustls")]
+            MaybeTlsStream::Rustls(stream) => {
+                stream.get_mut().set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
+                stream.get_mut().set_nonblocking(true).ok();
+            },*/
+            _ => {}
         }
 
         thread::spawn(move || {
@@ -139,23 +192,6 @@ impl S9NonBlockingWebSocketClient {
                 loop {
                     let msg = {
                         let mut sock = socket_reader.lock().unwrap(); // TODO: Handle error using crossbeam-channel or similar
-                        // Set read timeout on the underlying TCP stream
-                        match sock.get_mut() {
-                            MaybeTlsStream::Plain(stream) => {
-                                stream.set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
-                                //stream.set_nonblocking(true).ok();
-                            },
-                            MaybeTlsStream::NativeTls(stream) => {
-                                stream.get_mut().set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
-//                                stream.get_mut().set_nonblocking(true).ok();
-                            },
-                            /*#[cfg(feature = "rustls")]
-                            MaybeTlsStream::Rustls(stream) => {
-                                stream.get_mut().set_read_timeout(Some(std::time::Duration::from_millis(100))).ok();
-                                stream.get_mut().set_nonblocking(true).ok();
-                            },*/
-                            _ => {}
-                        }
                         sock.read()
                     };
                     let should_send = match &msg {
@@ -180,6 +216,9 @@ impl S9NonBlockingWebSocketClient {
                         if should_break {
                             break;
                         }
+                    } else {
+                        // Sleep for a while to avoid busy spin
+                        std::thread::sleep(std::time::Duration::from_millis(10));
                     }
                 }
             });
