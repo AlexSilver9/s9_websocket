@@ -69,26 +69,25 @@ pub enum NonBlockingStrategy {
 }
 
 impl NonBlockingStrategy {
-    pub fn new_non_blocking_strategy(busy_spin_wait_duration: Option<Duration>) -> Result<Self, String> {
-        match busy_spin_wait_duration {
-            Some(duration) => {
-                if duration.is_zero() {
-                    return Err("Busy spin wain duration cannot be zero".to_string());
-                }
-                Ok(NonBlockingStrategy::SpinNonBlocking(Some(duration)))
-            },
-            None => Ok(NonBlockingStrategy::SpinNonBlocking(None)),
-        }
+    pub fn new_non_blocking_strategy() -> Self {
+        NonBlockingStrategy::SpinNonBlocking(None)
     }
 
-    pub fn new_timeout_strategy(timeout_duration: Duration, busy_spin_wait_duration: Option<Duration>) -> Result<Self, String> {
+    pub fn new_non_blocking_strategy_with_spin_waiting(spin_wait_duration: Duration) -> Result<Self, String> {
+        if spin_wait_duration.is_zero() {
+            return Err("Spin wain duration cannot be zero".to_string());
+        }
+        Ok(NonBlockingStrategy::SpinNonBlocking(None))
+    }
+
+    pub fn new_timeout_strategy(timeout_duration: Duration, spin_wait_duration: Option<Duration>) -> Result<Self, String> {
         if timeout_duration.is_zero() {
             return Err("Timeout duration cannot be zero".to_string());
         }
-        match busy_spin_wait_duration {
+        match spin_wait_duration {
             Some(duration) => {
                 if duration.is_zero() {
-                    return Err("Busy spin wain duration cannot be zero".to_string());
+                    return Err("Spin wain duration cannot be zero".to_string());
                 }
                 Ok(NonBlockingStrategy::SpinBlockingWithTimeout(duration, Some(duration)))
             },
@@ -314,7 +313,7 @@ impl S9NonBlockingWebSocketClient {
     fn set_non_blocking_mode(non_blocking_strategy: &NonBlockingStrategy, stream: &mut TcpStream) {
         match non_blocking_strategy {
             NonBlockingStrategy::SpinNonBlocking(_) => {
-                stream.set_read_timeout(None).ok();
+                stream.set_read_timeout(None).ok();// TODO: return Errors;
                 stream.set_nonblocking(true).ok();
                 stream.set_nodelay(true).ok();
             },
