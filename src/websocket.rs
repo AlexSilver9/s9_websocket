@@ -164,21 +164,30 @@ impl S9NonBlockingWebSocketClient {
 
             thread::spawn(move || {
                 loop {
+                    /// Socket reader thread loop:
+                    /// 1. Acquires mutex lock and reads from WebSocket
+                    /// 2. Filters WouldBlock errors (normal in non-blocking mode)
+                    /// 3. Forwards valid messages/errors to main event loop via channel
+                    /// 4. Breaks loop on read errors or if main thread disconnects
+                    /// 5. Sleeps between iterations if spin_wait_duration is configured
+
                     let msg = {
-                        // TODO: Handle error using crossbeam-channel or similar
+                        // Acquire lock on shared socket, exit thread if poisoned
                         let sock = socket_reader.lock();
                         let mut sock = match sock {
                             Ok(sock) => sock,
                             Err(e) => {
-                                tracing::error!("S9NonBlockingWebSocketClient failed to aquire lock socket for reading: {}", e);
+                                send_or_log!(event_tx_for_socket_thread, "Mutex", WebSocketEvent::Error(format!("Failed to aquire lock for socket for reading: {}", result.unwrap_err())));
                                 return;
                             }
                         };
                         sock.read()
                     };
+
+                    // Filter out WouldBlock errors (expected in non-blocking mode)
                     let send_to_channel = match &msg {
                         Err(Error::Io(io_err)) if io_err.kind() == std::io::ErrorKind::WouldBlock => {
-                            false // Expected for non-blocking sockets, don't send or break
+                            false
                         },
                         Err(_) => {
                             tracing::error!("S9NonBlockingWebSocketClient failed to read from socket: {:?}", msg);
@@ -187,6 +196,7 @@ impl S9NonBlockingWebSocketClient {
                         _ => true
                     };
 
+                    // Send valid messages to main event loop, break on errors
                     if send_to_channel {
                         let should_break = msg.is_err();
                         let result = socket_tx.send(msg);
@@ -200,6 +210,7 @@ impl S9NonBlockingWebSocketClient {
                         }
                     }
 
+                    // Sleep to reduce CPU usage
                     if let Some(duration) = non_blocking_options.spin_wait_duration {
                         thread::sleep(duration);
                     }
