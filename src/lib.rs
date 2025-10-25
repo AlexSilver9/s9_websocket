@@ -1,11 +1,11 @@
 //! # s9_websocket
 //!
-//! A simple client library for blocking and non-blocking WebSockets.
+//! A simple client library for non-blocking and blocking WebSockets.
 //!
 //! ## Features
 //!
-//! - Simple blocking WebSocket client
 //! - Non-blocking WebSocket support
-//! - Built on top of `tungstenite`
+//! - Simple blocking WebSocket client
+//! - Built on top of `tungstenite` and `crossbeam-channel`
 
 pub mod websocket;

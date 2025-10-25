@@ -21,9 +21,7 @@ s9_websocket = "0.0.1"
 ```
 
 ## TLS Backend Selection
-By default, the library uses native-tls. To use rustls instead:
-[dependencies]
-s9_websocket = { version = "0.0.1", default-features = false, features = ["rustls"] }
+The library uses native-tls.
 
 ## Quick Start
 
