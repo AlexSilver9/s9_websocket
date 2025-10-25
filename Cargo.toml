@@ -11,6 +11,7 @@ documentation = "https://github.com/AlexSilver9/s9_websocket"
 homepage = "https://github.com/AlexSilver9/s9_websocket"
 repository = "https://github.com/AlexSilver9/s9_websocket"
 edition = "2021"
+rust-version = "1.80.1"
 include = ["src/**/*", "LICENSE-*", "README.md", "CHANGELOG.md"]
 
 [dependencies]
