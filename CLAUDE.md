@@ -9,7 +9,7 @@ and uses [crossbeam-channel](https://docs.rs/crossbeam/latest/crossbeam/channel/
 
 ## Architecture
 The **S9NonBlockingWebSocketClient** non-blocking implementation is based on a thread with tight loop reading messages from a websocket and publishing
-them through [crossbeam-channels](https://docs.rs/crossbeam/latest/crossbeam/channel/index.html).
+them through [crossbeam-channel](https://docs.rs/crossbeam/latest/crossbeam/channel/index.html).
 
 The **S9BlockingWebSocketClient** blocking implementation is runs on the caller's thread and provides websocket messages through a callback.
 
@@ -17,9 +17,9 @@ The **S9BlockingWebSocketClient** blocking implementation is runs on the caller'
 
 1. **S9NonBlockingWebSocketClient**: Asynchronous WebSocket client using threads and channels
 2  **S9BlockingWebSocketClient**: Synchronous WebSocket client that blocks on read operations
-3. **S9WebSocketClientHandler**: Trait for handling WebSocket events in blocking mode
-4. **WebSocketEvent**: Enum representing all possible WebSocket events
-5. **ControlMessage**: Enum for controlling the WebSocket connection
+2. **S9WebSocketClientHandler**: Trait for handling WebSocket events in blocking mode
+3. **WebSocketEvent**: Enum representing all possible WebSocket events
+4. **ControlMessage**: Enum for controlling the WebSocket connection
 
 ### Design Patterns
 
@@ -89,7 +89,7 @@ impl S9WebSocketClientHandler for MyHandler {
 ```
 
 ## Error Handling
-Currently uses `tungstenite::Error` directly. There's a TODO to implement a custom error type for better error handling and consistency.
+Currently, uses `tungstenite::Error` directly. There's a TODO to implement a custom error type for better error handling and consistency.
 
 ## Tracing
 The library uses the `tracing` crate for logging at different levels:
@@ -125,7 +125,40 @@ When testing or using this library:
 `crossbeam-channel`: Lock-free channels for thread communication
 `tracing`: Structured logging
 
-For Secure WebSockets the TLS features currently only native-tls supported. 
+For Secure WebSockets the TLS features currently only native-tls supported.
+
+## Coding Conventions
+- **Error Handling**: Use `Result` return value or [crossbeam-channel](https://docs.rs/crossbeam/latest/crossbeam/channel/index.html) to expose errors to caller
+- **Error Logging**: Log each error with `tracing::error!` macro.
+- **Logging**: Use `tracing` crate. Test if log level is present with `tracing::enabled!` before logging levels lower than ``tracing::Level::ERROR`.
+
+## Git Commit Conventions
+- **Commit message format**: Follow the [Conventional Commits specifications](https://www.conventionalcommits.org/en/v1.0.0/): 
+  - `<type>[optional scope]: <description>` for `PATCH` and `MINOR` commits
+  - `<type>[optional scope]!: <description>` for `MAJOR` commits to highlight BREAKING CHANGE of API
+  - Types than going to make it to the CHANGELOG are:
+    - `^feat`
+    - `^fix`
+    - `^doc`
+    - `^perf`
+    - `^refactor`
+    - `^style`
+    - `^test`
+    - `^chore`
+    - `^ci`
+    - `*security`
+    - `^revert`
+    - `*`
+  - Types that will be skipped are:
+    - `chore(release | deps.* | pr | pull)`
+  - See [cliff.toml](cliff.toml)
+
+## CHANGELOG Management
+- **Maintenance**: Use `cargo-release` and/or [git-cliff](https://git-cliff.org/docs/) to maintain the [CHANGELOG.md](CHANGELOG.md) 
+
+## Release Management
+- **Branch**: Release only from the `main`branch
+- **Release**: Uses [cargo-release](https://crates.io/crates/cargo-release) to release to [crates.io](https://crates.io) 
 
 ## Known Limitations & TODOs
 1. **God File**: All code is in one file which should be refactored to separate files

@@ -324,6 +324,7 @@ No tests are included in this project yet. This is a target of future improvemen
 ## Contributing
 Contributions are welcome!
 Please feel free to submit bugs and make feature requests [here](https://github.com/AlexSilver9/s9_websocket/issues)
+Further information like Coding Conventions are currently maintained in [CLAUDE.md](CLAUDE.md)  
 
 ## License
 This project is licensed under the APACHE and MIT License - see the LICENSE files for details.

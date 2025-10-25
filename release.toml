@@ -1,0 +1,16 @@
+pre-release-replacements = [
+    {file="README.md", search="s9_websocket = .*", replace="{{crate_name}} = \"{{version}}\""},
+    {file="CLAUDE.md", search="s9_websocket = .*", replace="{{crate_name}} = \"{{version}}\""},
+    {file="src/lib.rs", search="s9_websocket = .*", replace="{{crate_name}} = \"{{version}}\""},
+
+    # keep unreleased changes in an Unreleased section
+    {file="CHANGELOG.md", search="Unreleased", replace="{{version}}"},
+    {file="CHANGELOG.md", search="\\.\\.\\.HEAD", replace="...{{tag_name}}", exactly=1},
+    {file="CHANGELOG.md", search="ReleaseDate", replace="{{date}}"},
+    {file="CHANGELOG.md", search="<!-- next-header -->", replace="<!-- next-header -->\n\n## [Unreleased] - ReleaseDate", exactly=1},
+    {file="CHANGELOG.md", search="<!-- next-url -->", replace="<!-- next-url -->\n[Unreleased]: https://github.com/AlexSilver9/s9_websocket/compare/{{tag_name}}...HEAD", exactly=1},
+]
+
+pre-release-hook = ["git", "cliff", "-o", "CHANGELOG.md", "--tag", "{{version}}" ]
+
+allow-branch = ["main"]
