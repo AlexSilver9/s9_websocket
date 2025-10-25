@@ -6,7 +6,7 @@ A high-performance Rust WebSocket client library providing both blocking and non
 
 - 🚀 **Non-blocking and blocking modes** - Choose the right approach for your use case
 - ⚡ **Low latency** - TCP_NODELAY enabled by default for Non-blocking
-- 🔒 **Multiple TLS backends** - Support for both native-tls and rustls
+- 🔒 **TLS backend** - Support for native-tls
 - 📡 **Event-driven architecture** - Clean separation of concerns with channels
 - 🎯 **Type-safe API** - Leverage Rust's type system for correctness
 - 📊 **Built-in tracing** - Comprehensive logging support
