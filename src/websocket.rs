@@ -457,12 +457,6 @@ impl S9BlockingWebSocketClient{
         }
     }
 
-    #[inline]
-    pub fn send_text_pong_for_text_ping(&mut self, ping_message: &str) -> Result<(), Error> {
-        let pong = ping_message.replacen("ping", "pong", 1);
-        self.send_text_message_to_websocket(&pong)
-    }
-
     pub fn send_text_message(&mut self, s: &str) -> Result<(), Error> {
         self.send_text_message_to_websocket(s)
     }
