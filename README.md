@@ -1,5 +1,10 @@
 # Silver9 WebSocket
 
+[![Crates.io](https://img.shields.io/crates/v/s9_websocket.svg)](https://crates.io/crates/s9_websocket)
+[![Documentation](https://docs.rs/s9_websocket/badge.svg)](https://docs.rs/s9_websocket)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/AlexanderSilvennoinen/s9_websocket#license)
+[![Rust](https://img.shields.io/badge/rust-1.80.1+-orange.svg)](https://www.rust-lang.org)
+
 A high-performance Rust WebSocket client library providing both blocking and non-blocking implementations.
 
 ## Features
