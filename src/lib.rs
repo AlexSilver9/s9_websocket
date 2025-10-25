@@ -86,5 +86,8 @@
 //!
 //! For more examples and detailed documentation, see the [README on GitHub](https://github.com/AlexanderSilvennoinen/s9_websocket).
 
+mod websocket;
+mod error;
 
-pub mod websocket;
+pub use websocket::*;
+pub use error::{S9Result, S9WebSocketError, WebSocketError, ControlChannelError};

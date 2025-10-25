@@ -3,16 +3,15 @@ use std::net::TcpStream;
 use std::{str, thread};
 use std::str::FromStr;
 use std::time::Duration;
-use crossbeam_channel::{select, unbounded, Receiver, SendError, Sender};
+use crossbeam_channel::{select, unbounded, Receiver, Sender};
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Bytes, ClientRequestBuilder, Error, Message, Utf8Bytes, WebSocket};
 use tungstenite::handshake::client::Response;
 use tungstenite::http::{Uri};
 use tungstenite::protocol::CloseFrame;
+use crate::error::{S9WebSocketError, S9Result, WebSocketError, ControlChannelError};
 
 // TODO: Refactor clients and structs/enums to separate files
-// TODO: Use custom Error type for API
-// TODO: Custom Error Type for API
 // TODO  Socket Unthreading, e.g. split socket into read/write halves or unthread read instead of using Arc<Mutex<>>
 // TODO: Optional timeout for blocking socket
 // TODO: Add Tests
@@ -35,6 +34,7 @@ macro_rules! send_or_log {
         }
     };
 }
+
 
 pub trait S9WebSocketClientHandler {
     fn on_text_message(&mut self, data: &[u8]);
@@ -76,10 +76,10 @@ pub struct NonBlockingOptions {
 }
 
 impl NonBlockingOptions {
-    pub fn new(spin_wait_duration: Option<Duration>) -> Result<Self, String> {
+    pub fn new(spin_wait_duration: Option<Duration>) -> S9Result<Self> {
         if let Some(duration) = spin_wait_duration {
             if duration.is_zero() {
-                return Err("Spin wait duration cannot be zero".to_string());
+                return Err(WebSocketError::InvalidConfiguration("Spin wait duration cannot be zero".to_string()).into());
             }
         }
         Ok(Self {
@@ -101,11 +101,11 @@ pub struct S9BlockingWebSocketClient {
 }
 
 impl S9NonBlockingWebSocketClient {
-    pub fn connect(uri: &str) -> Result<S9NonBlockingWebSocketClient, Error> {
+    pub fn connect(uri: &str) -> S9Result<S9NonBlockingWebSocketClient> {
         Self::connect_with_headers(uri, &HashMap::new())
     }
 
-    pub fn connect_with_headers(uri: &str, headers: &HashMap<String, String>) -> Result<S9NonBlockingWebSocketClient, Error> {
+    pub fn connect_with_headers(uri: &str, headers: &HashMap<String, String>) -> S9Result<S9NonBlockingWebSocketClient> {
         let uri = get_uri(uri)?;
 
         let mut builder = ClientRequestBuilder::new(uri);
@@ -129,13 +129,13 @@ impl S9NonBlockingWebSocketClient {
     }
 
     #[inline]
-    pub fn run_non_blocking(&mut self, non_blocking_options: NonBlockingOptions) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run_non_blocking(&mut self, non_blocking_options: NonBlockingOptions) -> S9Result<()> {
         // Take ownership of the socket by replacing it with a dummy value
         // This is safe because we'll never use the original socket again after spawning
         let socket = self.socket.take();
         let mut socket = match socket {
             Some(s) => s,
-            None => return Err("Socket already moved to thread".into())
+            None => return Err(WebSocketError::SocketUnavailable.into()),
         };
         let control_rx = self.control_rx.clone();
         let event_tx = self.event_tx.clone();
@@ -157,7 +157,7 @@ impl S9NonBlockingWebSocketClient {
             let socket = std::sync::Arc::new(std::sync::Mutex::new(socket));
             let socket_reader = socket.clone();
 
-            let (socket_tx, socket_rx) = unbounded::<Result<Message, Error>>();
+            let (socket_tx, socket_rx) = unbounded::<Result<Message, S9WebSocketError>>();
 
             let event_tx_for_socket_thread = event_tx.clone();
 
@@ -171,16 +171,16 @@ impl S9NonBlockingWebSocketClient {
                     // 5. Sleeps between iterations if spin_wait_duration is configured
 
                     let msg = match socket_reader.lock() {
-                        Ok(mut sock) => sock.read(),
+                        Ok(mut sock) => sock.read().map_err(|e| S9WebSocketError::from(e)),
                         Err(e) => {
-                            send_or_log!(event_tx_for_socket_thread, "Mutex::Lock", WebSocketEvent::Error(format!("Failed to aquire lock for socket read: {}", e)));
+                            send_or_log!(event_tx_for_socket_thread, "Mutex::Lock", WebSocketEvent::Error(format!("Failed to acquire lock for socket read: {}", e)));
                             return;
                         }
                     };
 
                     // Filter out WouldBlock errors (expected in non-blocking mode)
                     let send_to_channel = match &msg {
-                        Err(Error::Io(io_err)) if io_err.kind() == std::io::ErrorKind::WouldBlock => {
+                        Err(S9WebSocketError::WebSocket(WebSocketError::Io(io_err))) if io_err.kind() == std::io::ErrorKind::WouldBlock => {
                             false
                         },
                         Err(_) => {
@@ -219,7 +219,7 @@ impl S9NonBlockingWebSocketClient {
                                 let mut sock = match socket.lock() {
                                     Ok(sock) => sock,
                                     Err(e) => {
-                                        send_or_log!(event_tx, "Mutex::Lock on ControlMessage::SendText", WebSocketEvent::Error(format!("Failed to aquire lock for socket send: {}", e)));
+                                        send_or_log!(event_tx, "Mutex::Lock on ControlMessage::SendText", WebSocketEvent::Error(format!("Failed to acquire lock for socket send: {}", e)));
                                         break;
                                     }
                                 };
@@ -231,7 +231,7 @@ impl S9NonBlockingWebSocketClient {
                                 let mut sock = match socket.lock() {
                                     Ok(sock) => sock,
                                     Err(e) => {
-                                        send_or_log!(event_tx, "Mutex::Lock on ControlMessage::Close", WebSocketEvent::Error(format!("Failed to aquire lock for socket send: {}", e)));
+                                        send_or_log!(event_tx, "Mutex::Lock on ControlMessage::Close", WebSocketEvent::Error(format!("Failed to acquire lock for socket send: {}", e)));
                                         break;
                                     }
                                 };
@@ -292,11 +292,11 @@ impl S9NonBlockingWebSocketClient {
                             },
                             Ok(Err(e)) => {
                                 match e {
-                                    Error::ConnectionClosed => {
-                                        send_or_log!(event_tx, "WebSocketEvent::ConnectionClosed on Error::ConnectionClosed", WebSocketEvent::ConnectionClosed(Some("S9NonBlockingWebSocketClient connection closed".to_string())));
+                                    S9WebSocketError::WebSocket(WebSocketError::ConnectionClosed(_)) => {
+                                        send_or_log!(event_tx, "WebSocketEvent::ConnectionClosed on Error::ConnectionClosed", WebSocketEvent::ConnectionClosed(Some("S9NonBlockingWebSocketClient connection closed normally".to_string())));
                                     },
                                     _ => {
-                                        send_or_log!(event_tx, "WebSocketEvent::Error on Tungsenite::AnyWebsocketReadError", WebSocketEvent::Error(format!("S9NonBlockingWebSocketClient error reading message: {}", e)));
+                                        send_or_log!(event_tx, "WebSocketEvent::Error on Tungsenite Error", WebSocketEvent::Error(format!("S9NonBlockingWebSocketClient error reading message: {}", e)));
                                     }
                                 }
                                 send_or_break!(event_tx, "WebSocketEvent::Quit on Tungsenite::Error", WebSocketEvent::Quit);
@@ -316,7 +316,7 @@ impl S9NonBlockingWebSocketClient {
         Ok(())
     }
 
-    fn set_non_blocking(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_non_blocking(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> S9Result<()> {
         // Set underlying streams to pure non-blocking or fake non-blocking with timeout
         match socket.get_mut() {
             MaybeTlsStream::Plain(stream) => {
@@ -333,24 +333,27 @@ impl S9NonBlockingWebSocketClient {
     }
 
     #[inline]
-    pub fn send_text_message(&mut self, s: &str) -> Result<(), SendError<ControlMessage>> {
-        let result = self.control_tx.send(ControlMessage::SendText(s.to_string()));
-        if let Err(ref e) = result {
-            tracing::error!("S9NonBlockingWebSocketClient failed to send context {} through crossbeam channel: {}", "ControlMessage::SendText", e);
-        }
-        result
+    pub fn send_text_message(&mut self, s: &str) -> S9Result<()> {
+        self.control_tx.send(ControlMessage::SendText(s.to_string()))
+            .map_err(|e| {
+                tracing::error!("S9NonBlockingWebSocketClient failed to send context {} through crossbeam channel: {}", "ControlMessage::SendText", e);
+                ControlChannelError::from(e).into()
+            })
     }
 }
 
 #[inline]
-fn send_text_message_to_websocket(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>, s: &str, client_name: &str) -> Result<(), Error> {
-    socket.send(Message::text(s))
+fn send_text_message_to_websocket(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>, text: &str, client_name: &str) -> S9Result<()> {
+    socket.send(Message::text(text))
         .map(|_| {
             if tracing::enabled!(tracing::Level::TRACE) {
-                tracing::trace!("{} sent text message: {}", client_name, s);
+                tracing::trace!("{} sent text message: {}", client_name, text);
             }
         })
-        .inspect_err(|e| tracing::error!("{} error sending text message: {}", client_name, e))
+        .map_err(|e| {
+            tracing::error!("{} error sending text message: {}", client_name, e);
+            WebSocketError::from(e).into()
+        })
 }
 
 fn close_websocket(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>, client_name: &str) {
@@ -358,11 +361,11 @@ fn close_websocket(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>, client_nam
 }
 
 impl S9BlockingWebSocketClient{
-    pub fn connect(uri: &str) -> Result<S9BlockingWebSocketClient, Error> {
+    pub fn connect(uri: &str) -> S9Result<S9BlockingWebSocketClient> {
         Self::connect_with_headers(uri, &HashMap::new())
     }
 
-    pub fn connect_with_headers(uri: &str, headers: &HashMap<String, String>) -> Result<S9BlockingWebSocketClient, Error> {
+    pub fn connect_with_headers(uri: &str, headers: &HashMap<String, String>) -> S9Result<S9BlockingWebSocketClient> {
         let uri = get_uri(uri)?;
 
         let mut builder = ClientRequestBuilder::new(uri);
@@ -457,25 +460,28 @@ impl S9BlockingWebSocketClient{
         }
     }
 
-    pub fn send_text_message(&mut self, s: &str) -> Result<(), Error> {
-        self.send_text_message_to_websocket(s)
+    pub fn send_text_message(&mut self, text: &str) -> S9Result<()> {
+        self.send_text_message_to_websocket(text)
     }
 
-    fn send_text_message_to_websocket(&mut self, s: &str) -> Result<(), Error> {
-        self.socket.send(Message::text(s))
+    fn send_text_message_to_websocket(&mut self, text: &str) -> S9Result<()> {
+        self.socket.send(Message::text(text))
             .map(|_| {
                 if tracing::enabled!(tracing::Level::TRACE) {
-                    tracing::trace!("S9BlockingWebSocketClient sent text message: {}", s);
+                    tracing::trace!("S9BlockingWebSocketClient sent text message: {}", text);
                 }
             })
-            .inspect_err(|e| tracing::error!("S9BlockingWebSocketClient error sending text message: {}", e))
+            .map_err(|e| {
+                tracing::error!("S9BlockingWebSocketClient error sending text message: {}", e);
+                WebSocketError::from(e).into()
+            })
     }
 }
 
-fn get_uri(uri: &str) -> Result<Uri, Error> {
+fn get_uri(uri: &str) -> S9Result<Uri> {
     Uri::from_str(uri).map_err(|e| {
         tracing::error!("S9WebSocketClient error connecting to invalid URI: {}", uri);
-        Error::from(e)
+        WebSocketError::InvalidUri(e.to_string()).into()
     })
 }
 

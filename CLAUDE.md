@@ -4,22 +4,21 @@
 s9_websocket is a lightweight library implementation for blocking and non-blocking stream-based WebSocket client.
 
 This is a Rust WebSocket client library that provides both blocking and non-blocking implementations for WebSocket communication.
-It's built on top of the [tungstenite-rs](https://docs.rs/tungstenite/latest/tungstenite) WebSocket library
-and uses [crossbeam-channel](https://docs.rs/crossbeam/latest/crossbeam/channel/index.html) for thread-safe message passing.
+It's built on top of the [tungstenite-rs](https://docs.rs/tungstenite/latest/tungstenite) WebSocket library and the [crossbeam-channel](https://docs.rs/crossbeam/latest/crossbeam/channel/index.html) message passing library for thread-safe message passing.
 
 ## Architecture
 The **S9NonBlockingWebSocketClient** non-blocking implementation is based on a thread with tight loop reading messages from a websocket and publishing
 them through [crossbeam-channel](https://docs.rs/crossbeam/latest/crossbeam/channel/index.html).
 
-The **S9BlockingWebSocketClient** blocking implementation is runs on the caller's thread and provides websocket messages through a callback.
+The **S9BlockingWebSocketClient** blocking implementation runs on the caller's thread and provides websocket messages through a callback.
 
 ### Core Components
 
 1. **S9NonBlockingWebSocketClient**: Asynchronous WebSocket client using threads and channels
-2  **S9BlockingWebSocketClient**: Synchronous WebSocket client that blocks on read operations
-2. **S9WebSocketClientHandler**: Trait for handling WebSocket events in blocking mode
-3. **WebSocketEvent**: Enum representing all possible WebSocket events
-4. **ControlMessage**: Enum for controlling the WebSocket connection
+2. **S9BlockingWebSocketClient**: Synchronous WebSocket client that blocks on read operations
+3. **S9WebSocketClientHandler**: Trait for handling WebSocket events in blocking mode
+4. **WebSocketEvent**: Enum representing all possible WebSocket events
+5. **ControlMessage**: Enum for controlling the WebSocket connection
 
 ### Design Patterns
 
@@ -89,7 +88,31 @@ impl S9WebSocketClientHandler for MyHandler {
 ```
 
 ## Error Handling
-Currently, uses `tungstenite::Error` directly. There's a TODO to implement a custom error type for better error handling and consistency.
+The library implements a comprehensive custom error hierarchy:
+
+### Error Types
+```rust
+/// Top-level error type for all S9WebSocket operations
+pub enum S9WebSocketError {
+    WebSocket(WebSocketError),           // WebSocket-related errors
+    ControlChannel(ControlChannelError), // Internal channel errors
+}
+
+/// WebSocket-specific errors
+pub enum WebSocketError {
+    ConnectionClosed(Option<String>),    // Connection closed by server
+    InvalidUri(String),                  // Invalid WebSocket URI
+    Io(std::io::Error),                  // I/O errors
+    Tungstenite(tungstenite::Error),     // Underlying tungstenite errors
+    SocketUnavailable,                   // Socket already taken
+    InvalidConfiguration(String),        // Invalid client configuration
+}
+
+/// Internal control channel errors
+pub enum ControlChannelError {
+    SendError(String),                   // Failed to send control message
+}
+```
 
 ## Tracing
 The library uses the `tracing` crate for logging at different levels:
@@ -98,17 +121,18 @@ The library uses the `tracing` crate for logging at different levels:
 - **ERROR**: Error conditions
 
 ## Thread Safety
-- Non-blocking client spawns two threads:
+- **Non-blocking client** spawns two threads:
   1. **Reader thread**: Continuously reads from socket
   2. **Event loop thread**: Processes control messages and socket write events
-- Channels are used for all cross-thread communication
+- **Blocking client** runs entirely on the caller's thread
+- Channels (`crossbeam-channel`) are used for all cross-thread communication
 - Socket is protected by Arc<Mutex<>> for shared access
 
 ## Performance Considerations
 1. **Non-blocking Mode**: Set `spin_wait_duration` to balance CPU usage vs latency
    - `None`: Maximum performance, high CPU usage
    - `Some(Duration)`: Lower CPU usage, slight latency increase
-2. **TCP Settings**: Both clients set TCP_NODELAY for lower latency
+2. ****Non-blocking TCP Settings**: TCP_NODELAY is set for lower latency
 3. **Message Handling**: Zero-copy where possible, but some allocations for Vec<u8> conversions
 
 ## Testing Recommendations
@@ -165,23 +189,21 @@ For Secure WebSockets the TLS features currently only native-tls supported.
 
 ## Known Limitations & TODOs
 1. **God File**: All code is in one file which should be refactored to separate files
-2. **Custom Error Type**: Need unified error handling (see TODO in code)
-3. **Socket Unthreading**: Would prefer to e.g. split socket into read/write halves or unthread read instead of using Arc<Mutex<>>
-4. **Blocking Timeout**: Blocking socket should support optional timeout. For now message send and control message will only be processed after at least a WebSocket Frame got read.
-5. **Tests**: Currently no tests are written
-6. **API Documentation**: Currently no API documentation is written
-7. **Code Documentation**: Currently no code documentation is written
+2. **Socket Unthreading**: Would prefer to e.g. split socket into read/write halves or unthread read instead of using Arc<Mutex<>>
+3. **Blocking Timeout**: Blocking socket should support optional timeout. For now message send and control message will only be processed after at least a WebSocket Frame got read.
+4. **Tests**: Currently no tests are written
+5. **API Documentation**: Currently no API documentation is written
+6. **Code Documentation**: Currently no code documentation is written
 
 ## Future Improvements
 1. Separating clients and structs/enums into separate files
-2. Implement custom error type for better error handling
-3. Add support for socket read timeout for blocking socket
-4. Add support for rustls
-5. Add tests
-6. Add API documentation
-7. Add code documentation
-8. Add metrics/statistics collection
-9. Add benchmarks, e.g. blocking vs. non-blocking
+2. Add support for socket read timeout for blocking socket
+3. Add support for rustls
+4. Add tests
+5. Add API documentation
+6. Add code documentation
+7. Add metrics/statistics collection
+8. Add benchmarks, e.g. blocking vs. non-blocking
 
 ## Known Issues & Gotchas
 - None

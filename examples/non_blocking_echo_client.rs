@@ -3,7 +3,7 @@
 //! This example connects to a WebSocket echo server, sends a message,
 //! and prints the echoed response.
 
-use s9_websocket::{S9NonBlockingWebSocketClient, WebSocketEvent, NonBlockingOptions};
+use s9_websocket::{S9NonBlockingWebSocketClient, WebSocketEvent, NonBlockingOptions, ControlMessage};
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -38,14 +38,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Received: {}", text);
                 message_count += 1;
 
-                // Exit after receiving one echo
+                // After receiving one echo, we can break the loop immediately
+                // or wait for a WebSocketEvent::ConnectionClosed + WebSocketEvent::Quit event
                 if message_count >= 1 {
                     println!("Closing connection...");
-                    break;
+                    client.control_tx.send(ControlMessage::Close())?;
                 }
             }
             Ok(WebSocketEvent::ConnectionClosed(reason)) => {
                 println!("Connection closed: {:?}", reason);
+                break;
             }
             Ok(WebSocketEvent::Error(err)) => {
                 eprintln!("Error: {}", err);
@@ -59,5 +61,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    println!("Example completed successfully");
     Ok(())
 }
