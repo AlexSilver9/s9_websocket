@@ -17,16 +17,17 @@ A simplified high-performance low-latency Rust WebSocket client library providin
 - 🤖 **Vibe Coding Ready** - Prepared for AI development with [Claude](https://claude.ai)
 
 ## Design Principled
-- 🕑 **Predictable latency** - No async runtime overhead, direct system calls, means lower baseline latency
+- 🕑 **Predictable latency** - No async runtime overhead, no `poll()`/`epoll_wait()`/`kevent()`- direct system calls, means lower baseline latency
 - 📋 **Low memory overhead** - No task scheduling, futures, or waker infrastructure
 - 🤯 **Simple mental model** - Straightforward thread-based concurrency
-- 📐 **Deterministic behavior** - Spin-wait duration gives precise control over CPU/latency tradeoff
+- 📐 **Deterministic behavior** - Optional spin-wait duration gives precise control over CPU/latency tradeoff
 - ⛔️ **No runtime** - No runtime or framework cost
 
 
 ## Disadvantages:
 - **Thread-per-connection** - Each client spawns 2 threads (main loop + reader), doesn't scale to thousands of connections
-- **Mutex contention** - Internal synchronization can causes contention between reader thread and control message sender 
+- **Mutex contention** - Internal synchronization can causes contention between reader thread and control message sender
+- **CPU overhead** - The fastest mode `non-blocking without spin-wait` utilizes 100% CPU core usage
 
 ## Installation
 
