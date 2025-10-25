@@ -153,8 +153,11 @@ For Secure WebSockets the TLS features currently only native-tls supported.
     - `chore(release | deps.* | pr | pull)`
   - See [cliff.toml](cliff.toml)
 
+## Versioning
+- **Semantic Versioning**: Version numbers follow [semver](https://semver.org) spec
+
 ## CHANGELOG Management
-- **Maintenance**: Use `cargo-release` and/or [git-cliff](https://git-cliff.org/docs/) to maintain the [CHANGELOG.md](CHANGELOG.md) 
+- **Maintenance**: Use `cargo-release` and/or [git-cliff](https://git-cliff.org/docs/) to maintain the [CHANGELOG.md](CHANGELOG.md)
 
 ## Release Management
 - **Branch**: Release only from the `main`branch
