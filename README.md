@@ -152,7 +152,6 @@ let client = S9NonBlockingWebSocketClient::connect_with_headers(
 impl S9WebSocketClientHandler for MyHandler {
     fn on_ping(&mut self, data: &[u8]) {
         println!("Received ping: {:?}", data);
-        // Pong is automatically sent by the underlying library
     }
 
     fn on_pong(&mut self, data: &[u8]) {
