@@ -1,218 +1,249 @@
-# Silver9 WebSocket Project - AI Assistant Guide
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+See @README for project overview.
 
 ## Project Overview
-s9_websocket is a lightweight library implementation for blocking and non-blocking stream-based WebSocket client.
+s9_websocket is a lightweight, low-latency Rust WebSocket client library providing three distinct implementations: async/threaded with channels, non-blocking with callbacks, and blocking with callbacks. Built on top of [tungstenite-rs](https://docs.rs/tungstenite/latest/tungstenite) and [crossbeam-channel](https://docs.rs/crossbeam/latest/crossbeam/channel/index.html).
 
-This is a Rust WebSocket client library that provides both blocking and non-blocking implementations for WebSocket communication.
-It's built on top of the [tungstenite-rs](https://docs.rs/tungstenite/latest/tungstenite) WebSocket library and the [crossbeam-channel](https://docs.rs/crossbeam/latest/crossbeam/channel/index.html) message passing library for thread-safe message passing.
+## Development Commands
+
+### Building and Testing
+```bash
+# Build the library
+cargo build
+
+# Build with release optimizations
+cargo build --release
+
+# Run examples (demonstrates all three client types)
+cargo run --example echo_client_non_blocking_async  # S9AsyncNonBlockingWebSocketClient (spawns thread, channels)
+cargo run --example echo_client_non_blocking        # S9NonBlockingWebSocketClient (caller thread, handler)
+cargo run --example echo_client_blocking            # S9BlockingWebSocketClient (caller thread, handler)
+cargo run --example echo_client_blocking_timeout    # S9BlockingWebSocketClient with timeout (caller thread, handler)
+
+# Check code without building
+cargo check
+```
 
 ## Architecture
-The **S9NonBlockingWebSocketClient** non-blocking implementation is based on a thread with tight loop reading messages from a websocket and publishing
-them through [crossbeam-channel](https://docs.rs/crossbeam/latest/crossbeam/channel/index.html).
 
-The **S9BlockingWebSocketClient** blocking implementation runs on the caller's thread and provides websocket messages through a callback.
+### Core Module Structure
+The codebase is organized into three main modules:
+- `src/lib.rs` - Public API exports and crate-level documentation
+- `src/websocket.rs` - All WebSocket client implementations (blocking and non-blocking)
+- `src/error.rs` - Comprehensive error type hierarchy
 
-### Core Components
+### Three Client Implementations
 
-1. **S9NonBlockingWebSocketClient**: Asynchronous WebSocket client using threads and channels
-2. **S9BlockingWebSocketClient**: Synchronous WebSocket client that blocks on read operations
-3. **S9WebSocketClientHandler**: Trait for handling WebSocket events in blocking mode
-4. **WebSocketEvent**: Enum representing all possible WebSocket events
-5. **ControlMessage**: Enum for controlling the WebSocket connection
+The library provides three distinct client implementations, each optimized for different use cases:
 
-### Design Patterns
+| Feature | S9AsyncNonBlockingWebSocketClient | S9NonBlockingWebSocketClient | S9BlockingWebSocketClient                        |
+|---------|-----------------------------------|------------------------------|--------------------------------------------------|
+| Threading | Spawns thread | Caller's thread | Caller's thread                                  |
+| Socket Mode | Non-blocking | Non-blocking | Blocking with optional timeout                   |
+| Event Delivery | Channels (`event_rx`) | Handler callbacks | Handler callbacks                                |
+| Control Messages | Built-in (`control_tx`) | External `Receiver<ControlMessage>` | External `Receiver<ControlMessage>`              |
+| CPU Usage | Configurable via spin_wait | Configurable via spin_wait | Low (blocks on read / write)                     |
+| Use Case | Multi-threaded async apps | Single-thread non-blocking | Simple blocking apps (non-blocking when timeout) |
 
-- **Event-driven architecture**: Non-blocking client uses channels to communicate events
-- **Thread-based concurrency**: Non-blocking client spawns separate thread(s) for socket reading and event processing
-- **Arc<Mutex<>>**: Non-blocking client shared socket access between reader and writer threads
-- **Handler pattern**: Blocking client uses trait-based callbacks
+#### S9AsyncNonBlockingWebSocketClient
+The async/threaded client with channel-based event delivery:
+- **Threading model**: Spawns a dedicated thread via `run()` that returns `JoinHandle<()>`
+- **Socket ownership**: Socket is moved into the spawned thread
+- **Communication**: Uses `crossbeam-channel` for bidirectional communication:
+  - `control_tx` (Sender) → Send commands (SendText, Close, ForceQuit) to the client thread
+  - `event_rx` (Receiver) → Receive events (TextMessage, BinaryMessage, ConnectionClosed, etc.) from the client thread
+- **Socket mode**: Non-blocking socket with `set_nonblocking(true)`
+- **Performance tuning**: `NonBlockingOptions::spin_wait_duration` controls CPU/latency tradeoff
+  - `None`: Maximum performance, 100% CPU usage (busy spin loop)
+  - `Some(Duration)`: Sleeps between reads, lower CPU usage, predictable latency increase
+- **TCP optimization**: Configurable `TCP_NODELAY` for lower latency on socket write
+- **Use case**: Best for applications that need async event processing with channels
 
-## Key Features
+#### S9NonBlockingWebSocketClient
+The "pure" non-blocking client with handler callbacks (zero overhead):
+- **Threading model**: Runs entirely on caller's thread (no thread spawning)
+- **Communication**: Uses handler trait (`S9WebSocketClientHandler`) for direct callbacks
+- **Control channel**: Accepts external `Receiver<ControlMessage>` passed to `run()`
+- **Socket mode**: Non-blocking socket with `set_nonblocking(true)`
+- **Performance tuning**: Same `NonBlockingOptions::spin_wait_duration` as async client
+- **TCP optimization**: Same `NonBlockingOptions::nodelay`as async client
+- **Use case**: Zero-overhead version for processing incoming messages with direct callbacks on caller's thread
 
-### Non-blocking Client
-- Event-based communication via channels
-- Separate reader thread for socket operations
-- Configurable spin-wait duration to reduce CPU usage
-- Control messages for sending data and managing connection
-- Suitable for high-performance applications
+#### S9BlockingWebSocketClient
+The synchronous blocking client:
+- **Threading model**: Runs entirely on caller's thread
+- **Communication**: Uses handler trait (`S9WebSocketClientHandler`) for direct callbacks
+- **Socket mode**: Blocking socket reads (can be configured with timeout via `BlockingOptions` to simulate non-blocking behavior)
+- **Performance tuning**: `BlockingOptions::spin_wait_duration` controls CPU/latency tradeoff with same options as async client
+- **TCP optimization**: Configurable `TCP_NODELAY` for lower latency on socket write
+- **Timeout support**: `BlockingOptions::read_timeout` and `write_timeout` for configurable blocking behavior
+- **Limitation**: Without timeout, control messages and sends only processed after receiving a WebSocket frame
+- **Use case**: Simple synchronous applications where blocking is acceptable
 
-### Blocking Client
-- Simple synchronous API
-- Blocking socket read means, message send and control message will only be executed after at least a WebSocket Frame got read 
-- Handler trait for event callbacks
-- Direct control flow
-- Suitable for simple use cases or when blocking is acceptable
+### Error Handling Architecture
+The library uses a hierarchical custom error system with three main types:
+- `S9WebSocketError` - Top-level error encompassing all operation types
+  - `WebSocket(WebSocketError)` - Connection, I/O, protocol errors
+  - `ControlChannel(ControlChannelError)` - Internal channel communication errors
 
-## Configuration
+Errors are exposed via:
+- **Non-blocking**: `WebSocketEvent::Error(String)` through `event_rx` channel
+- **Blocking**: `S9WebSocketClientHandler::on_error(String)` callback
+- **Result types**: All public API methods return `S9Result<T>` (alias for `Result<T, S9WebSocketError>`)
 
-### TLS Support
-The library for now only supports follwing TLS backend via Cargo features:
-- `native-tls` (default): Uses platform's native TLS
+### Connection Lifecycle
+All clients follow a similar lifecycle:
+1. **Connect** - Establish WebSocket connection (with optional custom headers)
+2. **Run** - Enter event loop (non-blocking spawns thread, blocking runs on caller thread)
+3. **Active** - Start process messages and control commands (before entering event loop)
+4. **Close** - Graceful shutdown (sends Close frame, waits for server acknowledgment)
+5. **Quit** - Cleanup and exit (triggered by ConnectionClosed event or ForceQuit)
 
-### Non-blocking Options
-```rust
-NonBlockingOptions {
-    spin_wait_duration: Option<Duration>  // Sleep duration between read attempts
-}
-```
+**Graceful shutdown**: Implemented via `Drop` trait - automatically sends Close frame when client is dropped.
 
-## Common Patterns
+### Thread Safety and Performance
+- **S9AsyncNonBlockingWebSocketClient**: Thread-safe via channels, spawns one thread per connection
+- **S9NonBlockingWebSocketClient**: Not thread-safe, runs on caller's thread
+- **S9BlockingWebSocketClient**: Not thread-safe, runs on caller's thread
+- **Channels**: All cross-thread communication uses `crossbeam-channel` (lock-free)
+- **Scaling limitation**: Does not scale to thousands of connections (see Scalability Constraints below)
 
-### Connecting with Custom Headers
-```rust
-let mut headers = HashMap::new();
-headers.insert("Authorization".to_string(), "Bearer token".to_string());
-let client = S9NonBlockingWebSocketClient::connect_with_headers(uri, &headers)?;
-```
+### Memory Allocation Patterns
 
-### Handling Events (Non-blocking)
-```rust
-loop {
-    match client.event_rx.recv() {
-        Ok(WebSocketEvent::TextMessage(data)) => { /* handle */ },
-        Ok(WebSocketEvent::ConnectionClosed(_)) => break,
-        // ... other events
-    }
-}
-```
+Each client has different memory allocation characteristics based on their architecture:
 
-### Implementing Handler (Blocking)
-```rust
-struct MyHandler;
-impl S9WebSocketClientHandler for MyHandler {
-    fn on_text_message(&mut self, data: &[u8]) { /* handle */ }
-    fn on_binary_message(&mut self, data: &[u8]) { /* handle */ }
-    fn on_connection_closed(&mut self, reason: Option<String>) { /* handle */ }
-    fn on_error(&mut self, error: String) { /* handle */ }
-}
-```
+#### S9AsyncNonBlockingWebSocketClient (Most Allocations)
+**Channel Infrastructure:**
+- `unbounded()` creates heap-allocated channel buffers for `control_tx`/`control_rx` and `event_tx`/`event_rx`
+- Channels persist for the lifetime of the client
 
-## Error Handling
-The library implements a comprehensive custom error hierarchy:
+**Message Handling (Per Message):**
+- `WebSocketEvent::TextMessage`: Allocates `Vec<u8>`
+- `WebSocketEvent::BinaryMessage`: Allocates `Vec<u8>`
+- `WebSocketEvent::Ping`: Allocates `Vec<u8>``
+- `WebSocketEvent::Pong`: Allocates `Vec<u8>`
 
-### Error Types
-```rust
-/// Top-level error type for all S9WebSocket operations
-pub enum S9WebSocketError {
-    WebSocket(WebSocketError),           // WebSocket-related errors
-    ControlChannel(ControlChannelError), // Internal channel errors
-}
+**Rationale:** Messages must be cloned from the tungstenite types to owned `Vec<u8>` for safe cross-thread transfer through channels. This ensures thread safety but comes with allocation overhead per message.
 
-/// WebSocket-specific errors
-pub enum WebSocketError {
-    ConnectionClosed(Option<String>),    // Connection closed by server
-    InvalidUri(String),                  // Invalid WebSocket URI
-    Io(std::io::Error),                  // I/O errors
-    Tungstenite(tungstenite::Error),     // Underlying tungstenite errors
-    SocketUnavailable,                   // Socket already taken
-    InvalidConfiguration(String),        // Invalid client configuration
-}
+#### S9NonBlockingWebSocketClient (Zero Allocations)
+**Zero-Copy Message Delivery:**
+- Handler callbacks receive `&[u8]` slice references directly from tungstenite messages
 
-/// Internal control channel errors
-pub enum ControlChannelError {
-    SendError(String),                   // Failed to send control message
-}
-```
+**Control Channel:**
+- Uses external `Receiver<ControlMessage>` provided by caller
+- No internal channel allocation
 
-## Tracing
-The library uses the `tracing` crate for logging at different levels:
-- **TRACE**: Detailed message content, connection details
-- **DEBUG**: Connection lifecycle events
-- **ERROR**: Error conditions
+**Rationale:** Single-threaded execution allows zero-copy message delivery via slice references. This is the most memory-efficient implementation.
 
-## Thread Safety
-- **Non-blocking client** spawns two threads:
-  1. **Reader thread**: Continuously reads from socket
-  2. **Event loop thread**: Processes control messages and socket write events
-- **Blocking client** runs entirely on the caller's thread
-- Channels (`crossbeam-channel`) are used for all cross-thread communication
-- Socket is protected by Arc<Mutex<>> for shared access
+#### S9BlockingWebSocketClient (Zero Allocations)
+***Zero-Copy Message Delivery:**
+- Handler callbacks receive `&[u8]` slice references directly from tungstenite messages
 
-## Performance Considerations
-1. **Non-blocking Mode**: Set `spin_wait_duration` to balance CPU usage vs latency
-   - `None`: Maximum performance, high CPU usage
-   - `Some(Duration)`: Lower CPU usage, slight latency increase
-2. ****Non-blocking TCP Settings**: TCP_NODELAY is set for lower latency
-3. **Message Handling**: Zero-copy where possible, but some allocations for Vec<u8> conversions
+**Control Channel:**
+- Uses external `Receiver<ControlMessage>` provided by caller
+- No internal channel allocation
 
-## Testing Recommendations
-When testing or using this library:
-1. **Connection Testing**: Test with both valid and invalid URIs
-2. **Reconnection**: Library doesn't auto-reconnect, implement in application layer
-3. **Graceful Shutdown**: Always send ControlMessage::Close() before dropping
-4. **Error Scenarios**: Test network interruptions, server disconnects
-5. **Message Ordering**: Events are delivered in order received
+**Rationale:** Single-threaded execution allows zero-copy message delivery via slice references. This is the most memory-efficient implementation.
 
+#### Error Path Allocations
 
-## Dependencies
-`tungstenite`: WebSocket protocol implementation
-`crossbeam-channel`: Lock-free channels for thread communication
-`tracing`: Structured logging
+- All clients may be allocate error strings on error paths  (e.g., `format!("Error reading message: {}", e)`)
 
-For Secure WebSockets the TLS features currently only native-tls supported.
+### Memory Efficiency Summary
+1. **Most efficient**: S9NonBlockingWebSocketClient and S9BlockingWebSocketClient (zero-copy message delivery)
+2. **Less efficient**: S9AsyncNonBlockingWebSocketClient (Vec allocations per message for thread-safe channel transfer)
+3. **Trade-off**: The async client sacrifices memory efficiency for thread-safety and async event processing
+
+### Scalability Constraints
+
+**None of the clients scale to thousands of connections.**
+
+The library's architecture requires one OS thread per connection because each client's `run()` method either spawns a dedicated thread or blocks the caller's thread indefinitely.
+There is no I/O multiplexing support to run multiple connections on a single thread.
+
+## Code Modules and Key Types
+
+### Public API Types (all in `src/websocket.rs`)
+- `S9AsyncNonBlockingWebSocketClient` - Async/threaded client with channels (spawns thread)
+- `S9NonBlockingWebSocketClient` - Non-blocking client with handler callbacks (caller's thread)
+- `S9BlockingWebSocketClient` - Blocking client with handler callbacks
+- `S9WebSocketClientHandler` - Trait for handler-based client callbacks
+- `WebSocketEvent` - Event enum for async client channel communication
+- `ControlMessage` - Control enum for managing connections (all clients)
+- `NonBlockingOptions` - Configuration for async and non-blocking clients
+- `BlockingOptions` - Configuration for blocking client (with timeout support)
+
+### Error Types (in `src/error.rs`)
+- `S9WebSocketError` - Top-level error type
+- `WebSocketError` - WebSocket-specific errors
+- `ControlChannelError` - Channel communication errors
+- `S9Result<T>` - Convenience type alias
 
 ## Coding Conventions
-- **Error Handling**: Use `Result` return value or [crossbeam-channel](https://docs.rs/crossbeam/latest/crossbeam/channel/index.html) to expose errors to caller
-- **Error Logging**: Log each error with `tracing::error!` macro.
-- **Logging**: Use `tracing` crate. Test if log level is present with `tracing::enabled!` before logging levels lower than ``tracing::Level::ERROR`.
+
+### Error Handling
+- Use `S9Result<T>` return type for all fallible operations
+- Log errors with `tracing::error!` macro at error sites
+- Expose errors to callers via Result types or channels (non-blocking) / callbacks (blocking)
+
+### Logging
+- Use `tracing` crate for all logging
+- Check log level with `tracing::enabled!` before logging at levels lower than ERROR
+- Log levels:
+  - `TRACE`: Detailed message content, connection details
+  - `DEBUG`: Connection lifecycle events
+  - `ERROR`: Error conditions
+
+### Channel Communication (async non-blocking)
+- Use provided macros for consistent error handling:
+  - `send_or_break!` - Send event or break loop on error
+  - `send_or_log!` - Send event or log on error (continue execution)
 
 ## Git Commit Conventions
-- **Commit message format**: Follow the [Conventional Commits specifications](https://www.conventionalcommits.org/en/v1.0.0/): 
-  - `<type>[optional scope]: <description>` for `PATCH` and `MINOR` commits
-  - `<type>[optional scope]!: <description>` for `MAJOR` commits to highlight BREAKING CHANGE of API
-  - Types than going to make it to the CHANGELOG are:
-    - `^feat`
-    - `^fix`
-    - `^doc`
-    - `^perf`
-    - `^refactor`
-    - `^style`
-    - `^test`
-    - `^chore`
-    - `^ci`
-    - `*security`
-    - `^revert`
-    - `*`
-  - Types that will be skipped are:
-    - `chore(release | deps.* | pr | pull)`
-  - See [cliff.toml](cliff.toml)
+Follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
+- Format: `<type>[optional scope]: <description>`
+- Breaking changes: `<type>[optional scope]!: <description>`
+- Types that generate CHANGELOG entries:
+  - `feat` - New features
+  - `fix` - Bug fixes
+  - `doc` - Documentation
+  - `perf` - Performance improvements
+  - `refactor` - Code refactoring
+  - `style` - Styling/formatting
+  - `test` - Tests
+  - `chore` - Maintenance (except `chore(release|deps.*|pr|pull)`)
+  - `ci` - CI/CD
+  - `*security` - Security fixes
+  - `revert` - Reverts
 
-## Versioning
-- **Semantic Versioning**: Version numbers follow [semver](https://semver.org) spec
+See [cliff.toml](cliff.toml) for full configuration.
 
-## CHANGELOG Management
-- **Maintenance**: Use `cargo-release` and/or [git-cliff](https://git-cliff.org/docs/) to maintain the [CHANGELOG.md](CHANGELOG.md)
+## Version and Releases Management
+- **Versioning**: Follows [semver](https://semver.org)
+- **CHANGELOG**: Maintained via [git-cliff](https://git-cliff.org/) and [cargo-release](https://crates.io/crates/cargo-release)
+- **Release branch**: Only release from `main` branch
+- **Release tool**: Uses `cargo-release` to publish to [crates.io](https://crates.io)
 
-## Release Management
-- **Branch**: Release only from the `main`branch
-- **Release**: Uses [cargo-release](https://crates.io/crates/cargo-release) to release to [crates.io](https://crates.io) 
+### Release Management
+```bash
+# Generate/update CHANGELOG using git-cliff
+git cliff -o CHANGELOG.md
 
-## Known Limitations & TODOs
-1. **God File**: All code is in one file which should be refactored to separate files
-2. **Socket Unthreading**: Would prefer to e.g. split socket into read/write halves or unthread read instead of using Arc<Mutex<>>
-3. **Blocking Timeout**: Blocking socket should support optional timeout. For now message send and control message will only be processed after at least a WebSocket Frame got read.
-4. **Tests**: Currently no tests are written
-5. **API Documentation**: Currently no API documentation is written
-6. **Code Documentation**: Currently no code documentation is written
+# Create a release (from main branch only)
+cargo release <type>
+```
 
-## Future Improvements
-1. Separating clients and structs/enums into separate files
-2. Add support for socket read timeout for blocking socket
-3. Add support for rustls
-4. Add tests
-5. Add API documentation
-6. Add code documentation
-7. Add metrics/statistics collection
-8. Add benchmarks, e.g. blocking vs. non-blocking
+## Known Limitations & Future Work
+1. **Code organization**: All logic in `src/websocket.rs` - should be split into separate files
+3. **TLS backends**: Only `native-tls` currently supported (`rustls` planned)
+4. **Testing**: No tests exist yet
+5. **Documentation**: No comprehensive API and code documentation yet
 
-## Known Issues & Gotchas
-- None
-
-## License
-This project is licensed under the APACHE and MIT License - see the LICENSE files for details.
-
-## Project URL
-Project source code is at https://github.com/AlexSilver9/s9_websocket.
-
-## Authors
-Alexander Silvennoinen
+## Project Information
+- **License**: MIT / Apache-2.0
+- **Repository**: https://github.com/AlexSilver9/s9_websocket
+- **Author**: Alexander Silvennoinen
+- **Minimum Rust Version**: 1.80.1
