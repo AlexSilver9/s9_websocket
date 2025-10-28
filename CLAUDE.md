@@ -44,7 +44,7 @@ The library provides three distinct client implementations, each optimized for d
 | Threading | Spawns thread | Caller's thread | Caller's thread                                  |
 | Socket Mode | Non-blocking | Non-blocking | Blocking with optional timeout                   |
 | Event Delivery | Channels (`event_rx`) | Handler callbacks | Handler callbacks                                |
-| Control Messages | Built-in (`control_tx`) | External `Receiver<ControlMessage>` | External `Receiver<ControlMessage>`              |
+| Control Messages | External `Sender<ControlMessage>` and `Receiver<ControlMessage>` | External `Receiver<ControlMessage>` | External `Receiver<ControlMessage>`              |
 | CPU Usage | Configurable via spin_wait | Configurable via spin_wait | Low (blocks on read / write)                     |
 | Use Case | Multi-threaded async apps | Single-thread non-blocking | Simple blocking apps (non-blocking when timeout) |
 
@@ -52,9 +52,12 @@ The library provides three distinct client implementations, each optimized for d
 The async/threaded client with channel-based event delivery:
 - **Threading model**: Spawns a dedicated thread via `run()` that returns `JoinHandle<()>`
 - **Socket ownership**: Socket is moved into the spawned thread
-- **Communication**: Uses `crossbeam-channel` for bidirectional communication:
+- **Communication**: Uses external `crossbeam-channel` channels provided by caller for bidirectional communication:
   - `control_tx` (Sender) → Send commands (SendText, Close, ForceQuit) to the client thread
+  - `control_rx` (Receiver) → Internal receiver for control messages (passed to `connect()`)
+  - `event_tx` (Sender) → Internal sender for events (passed to `connect()`)
   - `event_rx` (Receiver) → Receive events (TextMessage, BinaryMessage, ConnectionClosed, etc.) from the client thread
+- **Channel control**: API caller creates and passes channels during connection
 - **Socket mode**: Non-blocking socket with `set_nonblocking(true)`
 - **Performance tuning**: `NonBlockingOptions::spin_wait_duration` controls CPU/latency tradeoff
   - `None`: Maximum performance, 100% CPU usage (busy spin loop)
@@ -92,7 +95,7 @@ The library uses a hierarchical custom error system with three main types:
 Errors are exposed via:
 - **Non-blocking**: `WebSocketEvent::Error(String)` through `event_rx` channel
 - **Blocking**: `S9WebSocketClientHandler::on_error(String)` callback
-- **Result types**: All public API methods return `S9Result<T>` (alias for `Result<T, S9WebSocketError>`)
+- **Result types**: All public API functions return `S9Result<T>` (alias for `Result<T, S9WebSocketError>`)
 
 ### Connection Lifecycle
 All clients follow a similar lifecycle:
@@ -102,7 +105,34 @@ All clients follow a similar lifecycle:
 4. **Close** - Graceful shutdown (sends Close frame, waits for server acknowledgment)
 5. **Quit** - Cleanup and exit (triggered by ConnectionClosed event or ForceQuit)
 
-**Graceful shutdown**: Implemented via `Drop` trait - automatically sends Close frame when client is dropped.
+### Connection Shutdown Behavior
+
+#### Graceful Close (`ControlMessage::Close()`)
+Following the WebSocket protocol (RFC 6455):
+1. **Client sends Close Frame** to server via `ControlMessage::Close()`
+2. **Server responds** with Close Frame (per WebSocket spec)
+3. **Client receives** Close Frame from server
+4. **Event loop breaks** and performs cleanup
+
+Event delivery during graceful close:
+- **S9AsyncNonBlockingWebSocketClient**: `WebSocketEvent::ConnectionClosed` → `WebSocketEvent::Quit` → event loop exits
+- **S9NonBlockingWebSocketClient / S9BlockingWebSocketClient**: `on_connection_closed()` → `on_quit()` → event loop exits
+
+**Auto-close on Drop**: Graceful shutdown is automatically triggered when client is dropped (via `Drop` trait implementation).
+
+#### Force Quit (`ControlMessage::ForceQuit()`)
+Immediate shutdown bypassing WebSocket close protocol:
+1. **Event loop breaks immediately** - no Close Frame sent to server
+2. No waiting for server acknowledgment
+
+Use `ForceQuit()` when:
+- Server is unresponsive and not sending Close Frame responses
+- Need to immediately terminate connection without protocol compliance
+- Handling error scenarios requiring immediate cleanup
+
+Event delivery during force quit:
+- **S9AsyncNonBlockingWebSocketClient**: `WebSocketEvent::Quit` → event loop exits
+- **S9NonBlockingWebSocketClient / S9BlockingWebSocketClient**: `on_quit()` → event loop exits
 
 ### Thread Safety and Performance
 - **S9AsyncNonBlockingWebSocketClient**: Thread-safe via channels, spawns one thread per connection
@@ -116,15 +146,16 @@ All clients follow a similar lifecycle:
 Each client has different memory allocation characteristics based on their architecture:
 
 #### S9AsyncNonBlockingWebSocketClient (Most Allocations)
-**Channel Infrastructure:**
-- `unbounded()` creates heap-allocated channel buffers for `control_tx`/`control_rx` and `event_tx`/`event_rx`
-- Channels persist for the lifetime of the client
 
 **Message Handling (Per Message):**
 - `WebSocketEvent::TextMessage`: Allocates `Vec<u8>`
 - `WebSocketEvent::BinaryMessage`: Allocates `Vec<u8>`
 - `WebSocketEvent::Ping`: Allocates `Vec<u8>``
 - `WebSocketEvent::Pong`: Allocates `Vec<u8>`
+
+**Channel Infrastructure:**
+- Uses external control and event channels provided by caller
+- No internal channel allocation
 
 **Rationale:** Messages must be cloned from the tungstenite types to owned `Vec<u8>` for safe cross-thread transfer through channels. This ensures thread safety but comes with allocation overhead per message.
 
@@ -161,7 +192,7 @@ Each client has different memory allocation characteristics based on their archi
 
 **None of the clients scale to thousands of connections.**
 
-The library's architecture requires one OS thread per connection because each client's `run()` method either spawns a dedicated thread or blocks the caller's thread indefinitely.
+The library's architecture requires one OS thread per connection because each client's `run()` function either spawns a dedicated thread or blocks the caller's thread indefinitely.
 There is no I/O multiplexing support to run multiple connections on a single thread.
 
 ## Code Modules and Key Types

@@ -4,18 +4,16 @@ use std::{str, thread};
 use std::str::FromStr;
 use std::thread::JoinHandle;
 use std::time::Duration;
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender};
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Bytes, ClientRequestBuilder, Error, Message, Utf8Bytes, WebSocket};
 use tungstenite::handshake::client::Response;
 use tungstenite::http::{Uri};
 use tungstenite::protocol::CloseFrame;
-use crate::error::{S9Result, WebSocketError, ControlChannelError};
+use crate::error::{S9Result, WebSocketError};
 
 // TODO: Refactor clients and structs/enums to separate files
-// TODO: Configurable if timeout is an error or expected behavior
-// TODO: All clients should create control channels internally
-// TODO: Convinient methods for send_binry, pong, pong, etc...
+// TODO: Convinient functions for send_binry, pong, pong, etc...
 // TODO: Provide access to underlysing streams
 // TODO: Add Tests
 // TODO: Add API Documentation + change documentation pointer in Cargo.toml to something like https://docs.rs/s9_websocket/0.0.1
@@ -294,7 +292,7 @@ mod shared {
         }
     }
 
-    /// Handles incoming WebSocket messages by calling appropriate handler methods
+    /// Handles incoming WebSocket messages by calling appropriate handler functions
     #[inline]
     pub(crate) fn handle_message<H: S9WebSocketClientHandler>(msg: Message, handler: &mut H) -> ControlFlow {
         match msg {
@@ -473,21 +471,30 @@ pub struct S9AsyncNonBlockingWebSocketClient {
     pub control_tx: Sender<ControlMessage>,
     control_rx: Receiver<ControlMessage>,
     event_tx: Sender<WebSocketEvent>,
-    pub event_rx: Receiver<WebSocketEvent>,
 }
 
 impl S9AsyncNonBlockingWebSocketClient {
-    pub fn connect(uri: &str, options: NonBlockingOptions)-> S9Result<S9AsyncNonBlockingWebSocketClient> {
-        Self::connect_with_headers(uri, &HashMap::new(), options)
+    pub fn connect(
+        uri: &str,
+        options: NonBlockingOptions,
+        control_tx: Sender<ControlMessage>,
+        control_rx: Receiver<ControlMessage>,
+        event_tx: Sender<WebSocketEvent>
+    ) -> S9Result<S9AsyncNonBlockingWebSocketClient> {
+        Self::connect_with_headers(uri, &HashMap::new(), options, control_tx, control_rx, event_tx)
     }
 
-    pub fn connect_with_headers(uri: &str, headers: &HashMap<String, String>, options: NonBlockingOptions) -> S9Result<S9AsyncNonBlockingWebSocketClient> {
+    pub fn connect_with_headers(
+        uri: &str,
+        headers: &HashMap<String, String>,
+        options: NonBlockingOptions,
+        control_tx: Sender<ControlMessage>,
+        control_rx: Receiver<ControlMessage>,
+        event_tx: Sender<WebSocketEvent>,
+    ) -> S9Result<S9AsyncNonBlockingWebSocketClient> {
         let (mut socket, _response) = shared::connect_socket(uri, headers)?;
 
         shared::configure_non_blocking(&mut socket, &options)?;
-
-        let (control_tx, control_rx) = unbounded::<ControlMessage>();
-        let (event_tx, event_rx) = unbounded::<WebSocketEvent>();
 
         Ok(S9AsyncNonBlockingWebSocketClient {
             socket: Some(socket),
@@ -495,7 +502,6 @@ impl S9AsyncNonBlockingWebSocketClient {
             control_tx,
             control_rx,
             event_tx,
-            event_rx
         })
     }
 
@@ -603,15 +609,6 @@ impl S9AsyncNonBlockingWebSocketClient {
         });
         Ok(join_handle)
     }
-
-    #[inline]
-    pub fn send_text_message(&mut self, text: String) -> S9Result<()> {
-        self.control_tx.send(ControlMessage::SendText(text))
-            .map_err(|e| {
-                tracing::error!("Failed to send context {} through crossbeam channel: {}", "ControlMessage::SendText", e);
-                ControlChannelError::from(e).into()
-            })
-    }
 }
 
 // ============================================================================
@@ -628,7 +625,11 @@ impl S9NonBlockingWebSocketClient {
         Self::connect_with_headers(uri, &HashMap::new(), options)
     }
 
-    pub fn connect_with_headers(uri: &str, headers: &HashMap<String, String>, options: NonBlockingOptions) -> S9Result<S9NonBlockingWebSocketClient> {
+    pub fn connect_with_headers(
+        uri: &str,
+        headers: &HashMap<String, String>,
+        options: NonBlockingOptions
+    ) -> S9Result<S9NonBlockingWebSocketClient> {
         let (mut sock, _response) = shared::connect_socket(uri, headers)?;
 
         shared::configure_non_blocking(&mut sock, &options)?;
@@ -696,11 +697,6 @@ impl S9NonBlockingWebSocketClient {
             }
         }
     }
-
-    #[inline]
-    pub fn send_text_message(&mut self, text: &str) -> S9Result<()> {
-        shared::send_text_message_to_websocket(&mut self.socket, text)
-    }
 }
 
 // ============================================================================
@@ -717,7 +713,11 @@ impl S9BlockingWebSocketClient{
         Self::connect_with_headers(uri, &HashMap::new(), options)
     }
 
-    pub fn connect_with_headers(uri: &str, headers: &HashMap<String, String>, options: BlockingOptions) -> S9Result<S9BlockingWebSocketClient> {
+    pub fn connect_with_headers(
+        uri: &str,
+        headers: &HashMap<String, String>,
+        options: BlockingOptions
+    ) -> S9Result<S9BlockingWebSocketClient> {
         let (mut socket, _response) = shared::connect_socket(uri, headers)?;
 
         shared::configure_blocking(&mut socket, &options)?;
@@ -760,8 +760,7 @@ impl S9BlockingWebSocketClient{
                     match e {
                         Error::Io(ref err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                             if self.options.read_timeout.is_some() {
-                                // No data available, continue loop (expected in non-blocking mode using timeout)
-                                continue;
+                                continue; // No data available, continue loop (expected in timeout mode)
                             } else {
                                 handler.on_error(format!("Error reading message: {}", e));
                                 handler.on_quit();
@@ -770,8 +769,7 @@ impl S9BlockingWebSocketClient{
                         },
                         Error::Io(ref err) if err.kind() == std::io::ErrorKind::TimedOut => {
                             if self.options.read_timeout.is_some() {
-                                // No data available (e.g. Windows), continue loop (expected in non-blocking mode using timeout)
-                                continue;
+                                continue; // No data available (e.g. Windows), continue loop (expected in timeout mode)
                             } else {
                                 handler.on_error(format!("Error reading message: {}", e));
                                 handler.on_quit();
@@ -803,11 +801,6 @@ impl S9BlockingWebSocketClient{
                 thread::sleep(duration);
             }
         }
-    }
-
-    #[inline]
-    pub fn send_text_message(&mut self, text: &str) -> S9Result<()> {
-        shared::send_text_message_to_websocket(&mut self.socket, text)
     }
 }
 

@@ -6,6 +6,7 @@
 
 use s9_websocket::{S9AsyncNonBlockingWebSocketClient, WebSocketEvent, NonBlockingOptions, ControlMessage};
 use std::time::Duration;
+use crossbeam_channel::unbounded;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
@@ -17,15 +18,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = NonBlockingOptions::new()
         .spin_wait_duration(Some(Duration::from_millis(10)))?;
 
+    // Create control and event channels
+    let (control_tx, control_rx) = unbounded::<ControlMessage>();
+    let (event_tx, event_rx) = unbounded::<WebSocketEvent>();
+
     // Connect to the WebSocket echo server
     println!("Connecting to echo.websocket.org...");
-    let mut client = S9AsyncNonBlockingWebSocketClient::connect("wss://echo.websocket.org", options)?;
+    let mut client = S9AsyncNonBlockingWebSocketClient::connect("wss://echo.websocket.org", options, control_tx, control_rx, event_tx)?;
 
     // Start the event loop, which will start thread and return the handle immediately
     let client_thread = client.run()?;
 
-    // Send a test message
-    client.send_text_message("Hello from s9_websocket!".to_string())?;
+    // Send a text message using control channel
+    client.control_tx.send(ControlMessage::SendText("Hello from s9_websocket!".to_string()))?;
     println!("Sent: Hello from s9_websocket!");
 
     let control_tx = client.control_tx.clone();
@@ -35,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Handle events
         let mut message_count = 0;
         loop {
-            match client.event_rx.recv() {
+            match event_rx.recv() {
                 Ok(WebSocketEvent::Activated) => {
                     println!("WebSocket read thread activated");
                 }
@@ -45,9 +50,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     message_count += 1;
 
                     if message_count <= 2 {
-                        // Inside the thread we can use client send as shorthand
+                        // Send a text message using control channel
                         println!("Sending Echo!");
-                        client.send_text_message(format!("Echoed: {}", text)).ok();
+                        client.control_tx.send(ControlMessage::SendText(format!("Echoed: {}", text))).ok();
                     }
 
                     // After closing, we can break our loop immediately

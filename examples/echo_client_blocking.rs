@@ -63,12 +63,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Connecting to echo.websocket.org...");
     let mut client = S9BlockingWebSocketClient::connect("wss://echo.websocket.org", options)?;
 
-    // Send a test message via client function, which is shorthand for ControlMessage::SendText
-    println!("Sending: Hello from s9_websocket!");
-    client.send_text_message("Hello from s9_websocket!")?;
-
     // Create control channel
     let (control_tx, control_rx) = unbounded::<ControlMessage>();
+
+    // Send a text message via control channel
+    println!("Sending: Hello from s9_websocket!");
+    control_tx.send(ControlMessage::SendText("Hello from s9_websocket!".to_string()))?;
 
     // Create handler
     let mut handler = EchoHandler { control_tx, message_count: 0 };

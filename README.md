@@ -59,6 +59,7 @@ Choose the client that fits your application architecture:
 ### Async Non-blocking Client (with channels)
 ```rust
 use s9_websocket::{S9AsyncNonBlockingWebSocketClient, WebSocketEvent, ControlMessage, NonBlockingOptions};
+use crossbeam_channel::unbounded;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -66,14 +67,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
    let options = NonBlockingOptions::new()
            .spin_wait_duration(Some(Duration::from_millis(10)))?;
 
+   // Create control and event channels - you can choose bounded or unbounded
+   let (control_tx, control_rx) = unbounded::<ControlMessage>();
+   let (event_tx, event_rx) = unbounded::<WebSocketEvent>();
+
    // Connect to WebSocket server
-   let mut client = S9AsyncNonBlockingWebSocketClient::connect("wss://echo.websocket.org", options)?;
+   let mut client = S9AsyncNonBlockingWebSocketClient::connect(
+       "wss://echo.websocket.org",
+       options,
+       control_tx,
+       control_rx,
+       event_tx,
+       event_rx
+   )?;
 
    // Start the event loop (spawns thread)
    let _handle = client.run()?;
 
-   // Send a message
-   client.send_text_message("Hello, WebSocket!".to_string())?;
+   // Send a message using control channel
+   client.control_tx.send(ControlMessage::SendText("Hello, WebSocket!".to_string()))?;
 
    // Handle events from channel
    loop {
@@ -267,17 +279,16 @@ Spawns a background thread for socket operations and communicates via channels.
 
 #### Key Features
 - Background thread handles all socket operations
-- Receive events through built-in channels (`event_rx`)
-- Send commands through built-in channels (`control_tx`)
+- Receive events through user-provided channels (`event_rx`)
+- Send commands through user-provided channels (`control_tx`)
 - Thread-safe for multi-threaded applications
 - Configurable CPU/latency trade-off via spin-wait duration
 - Configurable socket options like TCP_NODELAY, TTL, etc
 
-#### Methods
-- `connect(uri: &str, options: NonBlockingOptions) -> S9Result<Self>`
-- `connect_with_headers(uri: &str, headers: &HashMap<String, String>, options: NonBlockingOptions) -> S9Result<Self>`
+#### Functions
+- `connect(uri: &str, options: NonBlockingOptions, control_tx: Sender<ControlMessage>, control_rx: Receiver<ControlMessage>, event_tx: Sender<WebSocketEvent>, event_rx: Receiver<WebSocketEvent>) -> S9Result<Self>`
+- `connect_with_headers(uri: &str, headers: &HashMap<String, String>, options: NonBlockingOptions, control_tx: Sender<ControlMessage>, control_rx: Receiver<ControlMessage>, event_tx: Sender<WebSocketEvent>, event_rx: Receiver<WebSocketEvent>) -> S9Result<Self>`
 - `run(&mut self) -> S9Result<JoinHandle<()>>` - Starts background thread
-- `send_text_message(&mut self, text: String) -> S9Result<()>`
 
 #### Fields
 - `control_tx: Sender<ControlMessage>` - Send control messages
@@ -297,11 +308,10 @@ Pure non-blocking client that runs on caller's thread using handler callbacks fo
 - Configurable CPU/latency trade-off via spin-wait duration
 - Configurable socket options like TCP_NODELAY, TTL, etc
 
-#### Methods
+#### Functions
 - `connect(uri: &str, options: NonBlockingOptions) -> S9Result<Self>`
 - `connect_with_headers(uri: &str, headers: &HashMap<String, String>, options: NonBlockingOptions) -> S9Result<Self>`
 - `run<HANDLER>(&mut self, handler: &mut HANDLER, control_rx: Receiver<ControlMessage>)` - Blocks on this thread
-- `send_text_message(&mut self, text: &str) -> S9Result<()>`
 
 ### S9BlockingWebSocketClient
 
@@ -318,11 +328,10 @@ Synchronous client that runs on caller's thread using handler callbacks for even
 - Configurable CPU/latency trade-off via spin-wait duration
 - Configurable socket options like TCP_NODELAY, TTL, etc
 
-#### Methods
+#### Functions
 - `connect(uri: &str, options: BlockingOptions) -> S9Result<Self>`
 - `connect_with_headers(uri: &str, headers: &HashMap<String, String>, options: BlockingOptions) -> S9Result<Self>`
 - `run<HANDLER>(&mut self, handler: &mut HANDLER, control_rx: Receiver<ControlMessage>)` - Blocks on this thread
-- `send_text_message(&mut self, text: &str) -> S9Result<()>`
 
 ### Shared Types
 
@@ -360,19 +369,38 @@ pub trait S9WebSocketClientHandler {
 ```rust
 pub enum ControlMessage {
     SendText(String),  // Send text message
-    Close(),           // Close connection gracefully - sends a Close Frame
-    ForceQuit(),       // Force quit - immediately break the socket and control channel poll loop
+    Close(),           // Close connection gracefully - sends Close Frame and waits for server response
+    ForceQuit(),       // Force quit - immediately break the event loop without waiting
 }
 ```
 
-### Close and Quit
-Graceful close is implemented by `Drop` trait. Graceful close means a Close Frame is sent to the server.
-Whenever a Close frame is received from the server
-- **non-blocking**: a `WebSocketEvent::ConnectionClosed` is published, followed by a `WebSocketEvent::Quit` event before breaking the socket and control channel poll loop
-- **blocking**: the `S9WebSocketClientHandler::on_connection_closed()` callback is invoked, followed by a `S9WebSocketClientHandler::on_quit()` call before breaking the socket and control channel poll loop
+### Connection Shutdown Behavior
 
-### Force Quit
-Send a 'ControlMessage::ForceQuit' to immediatelly break the socket and control channel poll loop
+#### Graceful Close (`ControlMessage::Close()`)
+When `ControlMessage::Close()` is sent:
+1. **Client sends Close Frame** to the server
+2. **Server responds** with a Close Frame (per WebSocket protocol)
+3. **Client receives** the Close Frame from server
+4. **Event loop breaks** and cleanup occurs
+
+Event flow during graceful close:
+- **Async client**: Publishes `WebSocketEvent::ConnectionClosed`, then `WebSocketEvent::Quit` before breaking the event loop
+- **Non-blocking/Blocking clients**: Calls `on_connection_closed()`, then `on_quit()` before breaking the event loop
+
+**Note**: Graceful close is also automatically triggered by the `Drop` trait when the client is dropped.
+
+#### Force Quit (`ControlMessage::ForceQuit()`)
+Use `ControlMessage::ForceQuit()` when:
+- The server is unresponsive and doesn't send a Close Frame response
+- You need to immediately break the event loop without waiting for server acknowledgment
+
+When `ForceQuit()` is sent:
+1. **Event loop breaks immediately** - no Close Frame is sent
+2. No waiting for server response
+
+Event flow during force quit:
+- **Async client**: Publishes `WebSocketEvent::Quit` and breaks the event loop
+- **Non-blocking/Blocking clients**: Calls `on_quit()` and breaks the event loop
 
 ## Logging
 The library uses the 'tracing' crate for logging. Enable logging in your application:
@@ -484,7 +512,7 @@ if let Err(e) = client.control_tx.send(ControlMessage::SendText("Hello".to_strin
 
 **None of the clients scale to thousands of connections.**
 
-The library's architecture requires one OS thread per connection because each client's `run()` method either
+The library's architecture requires one OS thread per connection because each client's `run()` function either
 spawns a dedicated thread (async client) or blocks the caller's thread indefinitely (non-blocking and blocking client).
 There is no I/O multiplexing support to run multiple connections on a single thread.
 For 1000+ connections, use async/await libraries like [tokio-tungstenite](https://docs.rs/tokio-tungstenite) or [async-tungstenite](https://docs.rs/async-tungstenite) that provide
