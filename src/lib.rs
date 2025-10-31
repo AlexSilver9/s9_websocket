@@ -231,6 +231,3 @@ mod error;
 
 pub use websocket::*;
 pub use error::{S9Result, S9WebSocketError};
-
-// TODO: Add support for rustls wolfssl
-// TODO: Add Tests
