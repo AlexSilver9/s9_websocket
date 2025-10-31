@@ -8,9 +8,9 @@ See @README for project overview and user-facing documentation.
 
 ### Most Important Files
 - `src/websocket/` - WebSocket client module (refactored into separate files)
-  - `async_client.rs` - S9AsyncNonBlockingWebSocketClient implementation
   - `nonblocking_client.rs` - S9NonBlockingWebSocketClient implementation
   - `blocking_client.rs` - S9BlockingWebSocketClient implementation
+  - `async_client.rs` - S9AsyncNonBlockingWebSocketClient implementation
   - `types.rs` - Public API types (traits, enums, macros)
   - `options.rs` - Configuration options
   - `shared.rs` - Shared internal helpers
@@ -26,10 +26,10 @@ cargo build
 cargo check
 
 # Run examples (demonstrates all three client types)
-cargo run --example echo_client_non_blocking_async  # S9AsyncNonBlockingWebSocketClient (spawns thread, channels)
 cargo run --example echo_client_non_blocking        # S9NonBlockingWebSocketClient (caller thread, handler)
 cargo run --example echo_client_blocking            # S9BlockingWebSocketClient (caller thread, handler)
 cargo run --example echo_client_blocking_timeout    # S9BlockingWebSocketClient with timeout (caller thread, handler)
+cargo run --example echo_client_non_blocking_async  # S9AsyncNonBlockingWebSocketClient (spawns thread, channels)
 ```
 
 ## Project Overview
@@ -42,28 +42,14 @@ s9_websocket is a lightweight, low-latency Rust WebSocket client library providi
 
 The library provides three distinct client implementations, each optimized for different use cases:
 
-| Feature | S9AsyncNonBlockingWebSocketClient | S9NonBlockingWebSocketClient    | S9BlockingWebSocketClient                        |
-|---------|-----------------------------------|---------------------------------|--------------------------------------------------|
-| Threading | Spawns thread | Caller's thread                 | Caller's thread                                  |
-| Socket Mode | Non-blocking | Non-blocking                    | Blocking with optional timeout                   |
-| Event Delivery | Channels (`event_rx`) | Handler callbacks               | Handler callbacks                                |
-| Control Messages | Built-in (`control_tx`) | Direct function calls on client | Direct function calls on client                    |
-| CPU Usage | Configurable via spin_wait | Configurable via spin_wait      | Low (blocks on read / write)                     |
-| Use Case | Multi-threaded async apps | Single-thread non-blocking      | Simple blocking apps (non-blocking when timeout) |
-
-#### S9AsyncNonBlockingWebSocketClient
-The async/threaded client with channel-based event delivery:
-- **Threading model**: Spawns a dedicated thread via `run()` that returns `JoinHandle<()>`
-- **Socket ownership**: Socket is moved into the spawned thread
-- **Communication**: Uses `crossbeam-channel` for bidirectional communication:
-  - `control_tx` (Sender) → Send commands (SendText, Close, ForceQuit) to the client thread
-  - `event_rx` (Receiver) → Receive events (TextMessage, BinaryMessage, ConnectionClosed, etc.) from the client thread
-- **Socket mode**: Non-blocking socket with `set_nonblocking(true)`
-- **Performance tuning**: `NonBlockingOptions::spin_wait_duration` controls CPU/latency tradeoff
-  - `None`: Maximum performance, 100% CPU usage (busy spin loop)
-  - `Some(Duration)`: Sleeps between reads, lower CPU usage, predictable latency increase
-- **TCP optimization**: Configurable `TCP_NODELAY` for lower latency on socket write
-- **Use case**: Best for applications that need async event processing with channels
+| Feature          | S9NonBlockingWebSocketClient    | S9BlockingWebSocketClient                        | S9AsyncNonBlockingWebSocketClient |
+|------------------|---------------------------------|--------------------------------------------------|-----------------------------------|
+| Threading        | Caller's thread                 | Caller's thread                                  | Spawns thread                     |
+| Socket Mode      | Non-blocking                    | Blocking with optional timeout                   | Non-blocking                      |
+| Event Delivery   | Handler callbacks               | Handler callbacks                                | Channels (`event_rx`)             |
+| Control Messages | Direct function calls on client | Direct function calls on client                  | Built-in (`control_tx`)           |
+| CPU Usage        | Configurable via spin_wait      | Low (blocks on read / write)                     | Configurable via spin_wait        |
+| Use Case         | Single-thread non-blocking      | Simple blocking apps (non-blocking when timeout) | Multi-threaded async apps         |
 
 #### S9NonBlockingWebSocketClient
 The "pure" non-blocking client with handler callbacks (zero overhead):
@@ -87,6 +73,20 @@ The synchronous blocking client:
 - **TCP optimization**: Configurable `TCP_NODELAY` for lower latency on socket write
 - **Timeout support**: `BlockingOptions::read_timeout` and `write_timeout` for configurable blocking behavior
 - **Use case**: Simple synchronous applications where blocking is acceptable
+
+#### S9AsyncNonBlockingWebSocketClient
+The async/threaded client with channel-based event delivery:
+- **Threading model**: Spawns a dedicated thread via `run()` that returns `JoinHandle<()>`
+- **Socket ownership**: Socket is moved into the spawned thread
+- **Communication**: Uses `crossbeam-channel` for bidirectional communication:
+  - `control_tx` (Sender) → Send commands (SendText, Close, ForceQuit) to the client thread
+  - `event_rx` (Receiver) → Receive events (TextMessage, BinaryMessage, ConnectionClosed, etc.) from the client thread
+- **Socket mode**: Non-blocking socket with `set_nonblocking(true)`
+- **Performance tuning**: `NonBlockingOptions::spin_wait_duration` controls CPU/latency tradeoff
+  - `None`: Maximum performance, 100% CPU usage (busy spin loop)
+  - `Some(Duration)`: Sleeps between reads, lower CPU usage, predictable latency increase
+- **TCP optimization**: Configurable `TCP_NODELAY` for lower latency on socket write
+- **Use case**: Best for applications that need async event processing with channels
 
 ### Error Handling Architecture
 The library uses a single unified error type:
@@ -181,25 +181,26 @@ The websocket module is organized into separate files:
 - `src/websocket/types.rs` - Public API types (traits, enums, macros)
 - `src/websocket/options.rs` - Configuration options (NonBlockingOptions, BlockingOptions)
 - `src/websocket/shared.rs` - Shared internal helpers (connection, message sending, tracing)
-- `src/websocket/async_client.rs` - S9AsyncNonBlockingWebSocketClient implementation
 - `src/websocket/nonblocking_client.rs` - S9NonBlockingWebSocketClient implementation
 - `src/websocket/blocking_client.rs` - S9BlockingWebSocketClient implementation
+- `src/websocket/async_client.rs` - S9AsyncNonBlockingWebSocketClient implementation
 - `src/websocket/mod.rs` - Module declarations and public re-exports
 
 ### Public API Types
-- `S9AsyncNonBlockingWebSocketClient` - Async/threaded client with channels (spawns thread)
 - `S9NonBlockingWebSocketClient` - Non-blocking client with handler callbacks (caller's thread)
 - `S9BlockingWebSocketClient` - Blocking client with handler callbacks
+- `S9AsyncNonBlockingWebSocketClient` - Async/threaded client with channels (spawns thread)
 - `S9WebSocketClientHandler<C>` - Trait for handler-based client callbacks (generic over client type)
+  - **All methods have default no-op implementations - only implement what you need!**
   - `on_activated()` - Called once before entering the event loop
   - `on_poll()` - Called every loop iteration before socket read (highest priority)
   - `on_idle()` - Called only when no data available - WouldBlock/TimedOut (lower priority)
   - `on_text_message()` - Text message received
   - `on_binary_message()` - Binary message received
-  - `on_connection_closed()` - Connection closed
-  - `on_error()` - Error occurred
   - `on_ping()` - Ping frame received
   - `on_pong()` - Pong frame received
+  - `on_connection_closed()` - Connection closed
+  - `on_error()` - Error occurred
   - `on_quit()` - Called once when event loop is about to break
 - `WebSocketEvent` - Event enum for async client channel communication
 - `ControlMessage` - Control enum for managing connections (async client only via channels)

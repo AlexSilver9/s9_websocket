@@ -43,7 +43,6 @@ pub(crate) fn configure_non_blocking(socket: &mut WebSocket<MaybeTlsStream<TcpSt
     let stream = match socket.get_mut() {
         MaybeTlsStream::Plain(stream) => stream,
         MaybeTlsStream::NativeTls(stream) => stream.get_mut(),
-        // TODO: Add support for rustls
         _ => return Ok(()),
     };
 
@@ -64,7 +63,6 @@ pub(crate) fn configure_blocking(socket: &mut WebSocket<MaybeTlsStream<TcpStream
     let stream = match socket.get_mut() {
         MaybeTlsStream::Plain(stream) => stream,
         MaybeTlsStream::NativeTls(stream) => stream.get_mut(),
-        // TODO: Add support for rustls
         _ => return Ok(()),
     };
 
@@ -255,20 +253,6 @@ pub(crate) fn trace_on_binary_message(bytes: &Bytes) {
     }
 }
 
-/// Traces connection close frame receipt
-pub(crate) fn trace_on_close_frame(close_frame: &Option<CloseFrame>) {
-    if tracing::enabled!(tracing::Level::TRACE) {
-        match close_frame {
-            Some(reason) => {
-                tracing::trace!("Connection closed with reason: {}", reason)
-            },
-            None => {
-                tracing::trace!("Connection closed without reason")
-            },
-        }
-    }
-}
-
 /// Traces ping message receipt
 #[inline]
 pub(crate) fn trace_on_ping_message(bytes: &Bytes) {
@@ -282,6 +266,20 @@ pub(crate) fn trace_on_ping_message(bytes: &Bytes) {
 pub(crate) fn trace_on_pong_message(bytes: &Bytes) {
     if tracing::enabled!(tracing::Level::TRACE) {
         tracing::trace!("Received pong frame: {}", String::from_utf8_lossy(&bytes));
+    }
+}
+
+/// Traces connection close frame receipt
+pub(crate) fn trace_on_close_frame(close_frame: &Option<CloseFrame>) {
+    if tracing::enabled!(tracing::Level::TRACE) {
+        match close_frame {
+            Some(reason) => {
+                tracing::trace!("Connection closed with reason: {}", reason)
+            },
+            None => {
+                tracing::trace!("Connection closed without reason")
+            },
+        }
     }
 }
 

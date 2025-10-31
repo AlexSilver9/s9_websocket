@@ -110,13 +110,6 @@ impl S9BlockingWebSocketClient{
                     shared::trace_on_binary_message(&bytes);
                     handler.on_binary_message(self, &bytes);
                 },
-                Message::Close(close_frame) => {
-                    shared::trace_on_close_frame(&close_frame);
-                    let reason = close_frame.map(|cf| cf.to_string());
-                    handler.on_connection_closed(self, reason);
-                    handler.on_quit(self);
-                    break;
-                },
                 Message::Ping(bytes) => {
                     shared::trace_on_ping_message(&bytes);
                     handler.on_ping(self, &bytes);
@@ -124,6 +117,13 @@ impl S9BlockingWebSocketClient{
                 Message::Pong(bytes) => {
                     shared::trace_on_pong_message(&bytes);
                     handler.on_pong(self, &bytes);
+                },
+                Message::Close(close_frame) => {
+                    shared::trace_on_close_frame(&close_frame);
+                    let reason = close_frame.map(|cf| cf.to_string());
+                    handler.on_connection_closed(self, reason);
+                    handler.on_quit(self);
+                    break;
                 },
                 Message::Frame(_) => {
                     shared::trace_on_frame();

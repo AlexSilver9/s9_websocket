@@ -102,13 +102,6 @@ impl S9AsyncNonBlockingWebSocketClient {
                                 shared::trace_on_binary_message(&bytes);
                                 send_or_break!(event_tx, "WebSocketEvent::BinaryMessage on Message::Binary", WebSocketEvent::BinaryMessage(bytes.to_vec()));
                             },
-                            Message::Close(close_frame) => {
-                                shared::trace_on_close_frame(&close_frame);
-                                let reason = close_frame.map(|cf| cf.to_string());
-                                send_or_log!(event_tx, "WebSocketEvent::ConnectionClosed on Message::Close", WebSocketEvent::ConnectionClosed(reason));
-                                send_or_log!(event_tx, "WebSocketEvent::Quit on Message::Close", WebSocketEvent::Quit);
-                                break;
-                            },
                             Message::Ping(bytes) => {
                                 shared::trace_on_ping_message(&bytes);
                                 send_or_break!(event_tx, "WebSocketEvent::Ping on Message::Ping", WebSocketEvent::Ping(bytes.to_vec()));
@@ -116,6 +109,13 @@ impl S9AsyncNonBlockingWebSocketClient {
                             Message::Pong(bytes) => {
                                 shared::trace_on_pong_message(&bytes);
                                 send_or_break!(event_tx, "WebSocketEvent::Pong on Message::Pong", WebSocketEvent::Pong(bytes.to_vec()));
+                            },
+                            Message::Close(close_frame) => {
+                                shared::trace_on_close_frame(&close_frame);
+                                let reason = close_frame.map(|cf| cf.to_string());
+                                send_or_log!(event_tx, "WebSocketEvent::ConnectionClosed on Message::Close", WebSocketEvent::ConnectionClosed(reason));
+                                send_or_log!(event_tx, "WebSocketEvent::Quit on Message::Close", WebSocketEvent::Quit);
+                                break;
                             },
                             Message::Frame(_) => {
                                 shared::trace_on_frame();

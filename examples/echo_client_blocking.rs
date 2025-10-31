@@ -15,6 +15,7 @@ struct EchoHandler {
 }
 
 impl S9WebSocketClientHandler<S9BlockingWebSocketClient> for EchoHandler {
+    // Implement only what you need
     fn on_text_message(&mut self, client: &mut S9BlockingWebSocketClient, data: &[u8]) {
         let text = String::from_utf8_lossy(data);
         println!("Received: {}", text);

@@ -21,6 +21,7 @@ struct EchoHandler {
 }
 
 impl S9WebSocketClientHandler<S9NonBlockingWebSocketClient> for EchoHandler {
+    // Implement only what you need
     fn on_activated(&mut self, _client: &mut S9NonBlockingWebSocketClient) {
         println!("WebSocket client activated");
     }
