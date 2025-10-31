@@ -67,7 +67,7 @@ The "pure" non-blocking client with handler callbacks (zero overhead):
 - **Threading model**: Runs entirely on caller's thread (no thread spawning)
 - **Communication**: Uses handler trait (`S9WebSocketClientHandler<Self>`) for direct callbacks
   - Handler receives `&mut self` as a parameter to each callback function
-  - Can call `send_text_message()`, `close()`, `force_quit()` directly from handler callbacks
+  - Can call `send_text_message()`, `send_binary_message()`, `send_ping()`, `send_pong()`, `close()`, `force_quit()` directly from handler callbacks
 - **Socket mode**: Non-blocking socket with `set_nonblocking(true)`
 - **Performance tuning**: Same `NonBlockingOptions::spin_wait_duration` as async client
 - **TCP optimization**: Same `NonBlockingOptions::nodelay` as async client
@@ -78,7 +78,7 @@ The synchronous blocking client:
 - **Threading model**: Runs entirely on caller's thread
 - **Communication**: Uses handler trait (`S9WebSocketClientHandler<Self>`) for direct callbacks
   - Handler receives `&mut self` as a parameter to each callback function
-  - Can call `send_text_message()`, `close()`, `force_quit()` directly from handler callbacks
+  - Can call `send_text_message()`, `send_binary_message()`, `send_ping()`, `send_pong()`, `close()`, `force_quit()` directly from handler callbacks
 - **Socket mode**: Blocking socket reads (can be configured with timeout via `BlockingOptions` to simulate non-blocking behavior)
 - **Performance tuning**: `BlockingOptions::spin_wait_duration` controls CPU/latency tradeoff with same options as async client
 - **TCP optimization**: Configurable `TCP_NODELAY` for lower latency on socket write
@@ -184,7 +184,13 @@ There is no I/O multiplexing support to run multiple connections on a single thr
   - `on_pong()` - Pong frame received
   - `on_quit()` - Called once when event loop is about to break
 - `WebSocketEvent` - Event enum for async client channel communication
-- `ControlMessage` - Control enum for managing connections (all clients)
+- `ControlMessage` - Control enum for managing connections (async client only via channels)
+  - `SendText(String)` - Send text message
+  - `SendBinary(Vec<u8>)` - Send binary message
+  - `SendPing(Vec<u8>)` - Send ping frame
+  - `SendPong(Vec<u8>)` - Send pong frame
+  - `Close()` - Graceful close (sends CloseFrame)
+  - `ForceQuit()` - Immediate shutdown
 - `NonBlockingOptions` - Configuration for async and non-blocking clients
 - `BlockingOptions` - Configuration for blocking client (with timeout support)
 
@@ -250,7 +256,7 @@ cargo release <type>
 
 ## Known Limitations & Future Work
 1. **Code organization**: All logic in `src/websocket.rs` - should be split into separate files
-3. **TLS backends**: Only `native-tls` currently supported (`rustls` planned)
+3. **TLS backends**: Only `native-tls` currently supported (`rustls` and maybe `wolfssl` planned)
 4. **Testing**: No tests exist yet
 5. **Documentation**: No comprehensive API and code documentation yet
 

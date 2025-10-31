@@ -24,8 +24,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start the event loop, which will start thread and return the handle immediately
     let client_thread = client.run()?;
 
-    // Send a text message
-    client.send_text_message("Hello from s9_websocket!".to_string())?;
+    // Send a text message using control channel
+    client.control_tx.send(ControlMessage::SendText("Hello from s9_websocket!".to_string()))?;
     println!("Sent: Hello from s9_websocket!");
 
     let control_tx = client.control_tx.clone();
@@ -45,9 +45,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     message_count += 1;
 
                     if message_count <= 2 {
-                        // Inside the thread we can use client send as shorthand
+                        // Echo the messages
                         println!("Sending Echo!");
-                        client.send_text_message(format!("Echoed: {}", text)).ok();
+                        client.control_tx.send(ControlMessage::SendText(format!("Echoed: {}", text))).ok();
                     }
 
                     // After closing, we can break our loop immediately
@@ -72,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Outside our thread we can use message passing to send messages
+    // Outside our thread we can use message passing to send messages via control channel
     control_tx.send(ControlMessage::SendText("Hello from s9_websocket again!".to_string()))?;
 
     // Optionally wait for the event loops

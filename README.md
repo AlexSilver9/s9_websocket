@@ -73,8 +73,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
    // Start the event loop (spawns thread)
    let _handle = client.run()?;
 
-   // Send a message
-   client.send_text_message("Hello, WebSocket!".to_string())?;
+   // Send a message via control channel
+   client.control_tx.send(ControlMessage::SendText("Hello, WebSocket!".to_string()))?;
 
    // Handle events from channel
    loop {
@@ -281,10 +281,9 @@ Spawns a background thread for socket operations and communicates via channels.
 - `connect(uri: &str, options: NonBlockingOptions) -> S9Result<Self>`
 - `connect_with_headers(uri: &str, headers: &HashMap<String, String>, options: NonBlockingOptions) -> S9Result<Self>`
 - `run(&mut self) -> S9Result<JoinHandle<()>>` - Starts background thread
-- `send_text_message(&mut self, text: String) -> S9Result<()>`
 
 #### Fields
-- `control_tx: Sender<ControlMessage>` - Send control messages
+- `control_tx: Sender<ControlMessage>` - Send control messages (SendText, SendBinary, SendPing, SendPong, Close, ForceQuit)
 - `event_rx: Receiver<WebSocketEvent>` - Receive events
 
 ### S9NonBlockingWebSocketClient
@@ -306,6 +305,9 @@ Pure non-blocking client that runs on caller's thread using handler callbacks fo
 - `connect_with_headers(uri: &str, headers: &HashMap<String, String>, options: NonBlockingOptions) -> S9Result<Self>`
 - `run<HANDLER>(&mut self, handler: &mut HANDLER)` - Blocks on this thread, passes `&mut self` to handler functions
 - `send_text_message(&mut self, text: &str) -> S9Result<()>`
+- `send_binary_message(&mut self, data: Vec<u8>) -> S9Result<()>`
+- `send_ping(&mut self, data: Vec<u8>) -> S9Result<()>`
+- `send_pong(&mut self, data: Vec<u8>) -> S9Result<()>`
 - `close(&mut self)` - Sends Close Frame to server
 - `force_quit(&mut self)` - Immediately breaks event loop
 
@@ -329,6 +331,9 @@ Synchronous client that runs on caller's thread using handler callbacks for even
 - `connect_with_headers(uri: &str, headers: &HashMap<String, String>, options: BlockingOptions) -> S9Result<Self>`
 - `run<HANDLER>(&mut self, handler: &mut HANDLER)` - Blocks on this thread, passes `&mut self` to handler functions
 - `send_text_message(&mut self, text: &str) -> S9Result<()>`
+- `send_binary_message(&mut self, data: Vec<u8>) -> S9Result<()>`
+- `send_ping(&mut self, data: Vec<u8>) -> S9Result<()>`
+- `send_pong(&mut self, data: Vec<u8>) -> S9Result<()>`
 - `close(&mut self)` - Sends Close Frame to server
 - `force_quit(&mut self)` - Immediately breaks event loop
 
@@ -377,9 +382,12 @@ pub trait S9WebSocketClientHandler<C> {
 ### ControlMessage
 ```rust
 pub enum ControlMessage {
-    SendText(String),  // Send text message
-    Close(),           // Close connection gracefully - sends a Close Frame
-    ForceQuit(),       // Force quit - immediately break the socket and control channel poll loop
+    SendText(String),      // Send text message
+    SendBinary(Vec<u8>),   // Send binary message
+    SendPing(Vec<u8>),     // Send ping frame
+    SendPong(Vec<u8>),     // Send pong frame
+    Close(),               // Close connection gracefully - sends a Close Frame
+    ForceQuit(),           // Force quit - immediately break the socket and control channel poll loop
 }
 ```
 

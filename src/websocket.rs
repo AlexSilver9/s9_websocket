@@ -13,7 +13,6 @@ use tungstenite::protocol::CloseFrame;
 use crate::error::{S9Result, WebSocketError, ControlChannelError};
 
 // TODO: Refactor clients and structs/enums to separate files
-// TODO: Convenient functions for send_binary, pong, pong, etc...
 // TODO: Provide access to underlying streams
 // TODO: Add Tests
 // TODO: Add API Documentation + change documentation pointer in Cargo.toml to something like https://docs.rs/s9_websocket/0.0.1
@@ -89,6 +88,9 @@ pub enum WebSocketEvent {
 
 pub enum ControlMessage {
     SendText(String),
+    SendBinary(Vec<u8>),
+    SendPing(Vec<u8>),
+    SendPong(Vec<u8>),
     Close(),
     ForceQuit(),
 }
@@ -291,6 +293,24 @@ mod shared {
                 }
                 Ok(ControlFlow::Continue)
             },
+            ControlMessage::SendBinary(data) => {
+                if let Err(e) = send_binary_message_to_websocket(socket, data) {
+                    return Err(format!("Error sending binary: {}", e));
+                }
+                Ok(ControlFlow::Continue)
+            },
+            ControlMessage::SendPing(data) => {
+                if let Err(e) = send_ping_to_websocket(socket, data) {
+                    return Err(format!("Error sending ping: {}", e));
+                }
+                Ok(ControlFlow::Continue)
+            },
+            ControlMessage::SendPong(data) => {
+                if let Err(e) = send_pong_to_websocket(socket, data) {
+                    return Err(format!("Error sending pong: {}", e));
+                }
+                Ok(ControlFlow::Continue)
+            },
             ControlMessage::Close() => {
                 close_websocket_with_logging(socket, "ControlMessage::Close");
                 Ok(ControlFlow::Continue)
@@ -341,6 +361,51 @@ mod shared {
             })
             .map_err(|e| {
                 tracing::error!("Error sending text message: {}", e);
+                WebSocketError::from(e).into()
+            })
+    }
+
+    /// Sends binary message to WebSocket
+    #[inline]
+    pub(crate) fn send_binary_message_to_websocket(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>, data: Vec<u8>) -> S9Result<()> {
+        socket.send(Message::Binary(data.into()))
+            .map(|_| {
+                if tracing::enabled!(tracing::Level::TRACE) {
+                    tracing::trace!("Sent binary message");
+                }
+            })
+            .map_err(|e| {
+                tracing::error!("Error sending binary message: {}", e);
+                WebSocketError::from(e).into()
+            })
+    }
+
+    /// Sends ping to WebSocket
+    #[inline]
+    pub(crate) fn send_ping_to_websocket(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>, data: Vec<u8>) -> S9Result<()> {
+        socket.send(Message::Ping(data.into()))
+            .map(|_| {
+                if tracing::enabled!(tracing::Level::TRACE) {
+                    tracing::trace!("Sent ping");
+                }
+            })
+            .map_err(|e| {
+                tracing::error!("Error sending ping: {}", e);
+                WebSocketError::from(e).into()
+            })
+    }
+
+    /// Sends pong to WebSocket
+    #[inline]
+    pub(crate) fn send_pong_to_websocket(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>, data: Vec<u8>) -> S9Result<()> {
+        socket.send(Message::Pong(data.into()))
+            .map(|_| {
+                if tracing::enabled!(tracing::Level::TRACE) {
+                    tracing::trace!("Sent pong");
+                }
+            })
+            .map_err(|e| {
+                tracing::error!("Error sending pong: {}", e);
                 WebSocketError::from(e).into()
             })
     }
@@ -572,15 +637,6 @@ impl S9AsyncNonBlockingWebSocketClient {
         });
         Ok(join_handle)
     }
-
-    #[inline]
-    pub fn send_text_message(&mut self, text: String) -> S9Result<()> {
-        self.control_tx.send(ControlMessage::SendText(text))
-            .map_err(|e| {
-                tracing::error!("Failed to send context {} through crossbeam channel: {}", "ControlMessage::SendText", e);
-                ControlChannelError::from(e).into()
-            })
-    }
 }
 
 // ============================================================================
@@ -684,6 +740,21 @@ impl S9NonBlockingWebSocketClient {
     #[inline]
     pub fn send_text_message(&mut self, text: &str) -> S9Result<()> {
         shared::send_text_message_to_websocket(&mut self.socket, text)
+    }
+
+    #[inline]
+    pub fn send_binary_message(&mut self, data: Vec<u8>) -> S9Result<()> {
+        shared::send_binary_message_to_websocket(&mut self.socket, data)
+    }
+
+    #[inline]
+    pub fn send_ping(&mut self, data: Vec<u8>) -> S9Result<()> {
+        shared::send_ping_to_websocket(&mut self.socket, data)
+    }
+
+    #[inline]
+    pub fn send_pong(&mut self, data: Vec<u8>) -> S9Result<()> {
+        shared::send_pong_to_websocket(&mut self.socket, data)
     }
 
     pub fn close(&mut self) {
@@ -827,6 +898,21 @@ impl S9BlockingWebSocketClient{
     #[inline]
     pub fn send_text_message(&mut self, text: &str) -> S9Result<()> {
         shared::send_text_message_to_websocket(&mut self.socket, text)
+    }
+
+    #[inline]
+    pub fn send_binary_message(&mut self, data: Vec<u8>) -> S9Result<()> {
+        shared::send_binary_message_to_websocket(&mut self.socket, data)
+    }
+
+    #[inline]
+    pub fn send_ping(&mut self, data: Vec<u8>) -> S9Result<()> {
+        shared::send_ping_to_websocket(&mut self.socket, data)
+    }
+
+    #[inline]
+    pub fn send_pong(&mut self, data: Vec<u8>) -> S9Result<()> {
+        shared::send_pong_to_websocket(&mut self.socket, data)
     }
 
     pub fn close(&mut self) {
