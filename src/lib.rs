@@ -213,7 +213,6 @@ mod error;
 pub use websocket::*;
 pub use error::{S9Result, S9WebSocketError};
 
-// TODO: Change documentation link in Cargo.toml and README.md to point to e.g.  https://docs.rs/s9_websocket/0.0.1
 // TODO: Provide access to underlying streams
 // TODO: Implement support for rustls / wolfssl
 // TODO: Add Tests
