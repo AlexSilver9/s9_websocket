@@ -1,46 +1,44 @@
 //! Simple echo client example using the blocking WebSocket client.
 //! The blocking client with options set to timeout on read and write operations simulates
 //! non-blocking behavior.
-//! For more complex use-cases, consider using the non-blocking client
-//!
-//! This example connects to a WebSocket echo server, sends some messages
-//! and prints the echoed responses.
 
 use std::time::Duration;
-use s9_websocket::{S9BlockingWebSocketClient, S9WebSocketClientHandler, ControlMessage};
-use crossbeam_channel::unbounded;
+use s9_websocket::{S9BlockingWebSocketClient, S9WebSocketClientHandler};
 
 struct EchoHandler {
-    control_tx: crossbeam_channel::Sender<ControlMessage>,
     message_count: usize,
 }
 
-impl S9WebSocketClientHandler for EchoHandler {
-    fn on_text_message(&mut self, data: &[u8]) {
+impl S9WebSocketClientHandler<S9BlockingWebSocketClient> for EchoHandler {
+    fn on_text_message(&mut self, client: &mut S9BlockingWebSocketClient, data: &[u8]) {
+        // Normal message processing
         let text = String::from_utf8_lossy(data);
         println!("Received: {}", text);
         self.message_count += 1;
 
-        // Send a message after receiving one echo via ControlMessage.
+        // Send another message after receiving one echo
         if self.message_count <= 2 {
             println!("Sending Echo!");
-            self.control_tx.send(ControlMessage::SendText(format!("Echoed: {}", text))).ok();
+            client.send_text_message(&format!("Echoed: {}", text)).ok();
+        } else {
+            println!("Closing connection...");
+            client.close();
         }
     }
 
-    fn on_binary_message(&mut self, data: &[u8]) {
+    fn on_binary_message(&mut self, _client: &mut S9BlockingWebSocketClient, data: &[u8]) {
         println!("Received binary message: {} bytes", data.len());
     }
 
-    fn on_connection_closed(&mut self, reason: Option<String>) {
+    fn on_connection_closed(&mut self, _client: &mut S9BlockingWebSocketClient, reason: Option<String>) {
         println!("Connection closed: {:?}", reason);
     }
 
-    fn on_error(&mut self, error: String) {
+    fn on_error(&mut self, _client: &mut S9BlockingWebSocketClient, error: String) {
         eprintln!("Error: {}", error);
     }
 
-    fn on_quit(&mut self) {
+    fn on_quit(&mut self, _client: &mut S9BlockingWebSocketClient) {
         println!("Client quit");
     }
 }
@@ -51,7 +49,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_max_level(tracing::Level::INFO)
         .init();
 
-    // Default blocking options for infinite read/write blocking.
+    // Blocking options with timeout for simulated non-blocking behavior
+    // and some spin waiting to reduce CPU usage while still being responsive
     let options = s9_websocket::BlockingOptions::new()
         .read_timeout(Some(Duration::from_micros(100)))?
         .write_timeout(Some(Duration::from_micros(100)))?;
@@ -60,28 +59,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Connecting to echo.websocket.org...");
     let mut client = S9BlockingWebSocketClient::connect("wss://echo.websocket.org", options)?;
 
-    // Create control channel
-    let (control_tx, control_rx) = unbounded::<ControlMessage>();
-    let control_tx_for_thread = control_tx.clone();
+    // Send initial message
+    client.send_text_message("Hello from s9_websocket!")?;
 
-    // Create handler
-    let mut handler = EchoHandler { control_tx, message_count: 0 };
-
-    let close_thread = std::thread::spawn(move || {
-        // Wait some time to ensure the client event loop is running and send a close message
-        std::thread::sleep(Duration::from_secs(3));
-        println!("Sending Close");
-        control_tx_for_thread.send(ControlMessage::Close()).ok();
-    });
+    // Create handler with signal receiver
+    let mut handler = EchoHandler {
+        message_count: 0,
+    };
 
     // Run blocking loop which will run until the connection is closed
-    let client_thread = std::thread::spawn(move || {
-        client.run(&mut handler, control_rx);
-    });
-
-    // Wait for threads to finish
-    close_thread.join().ok();
-    client_thread.join().ok();
+    client.run(&mut handler);
 
     println!("Example completed successfully");
     Ok(())

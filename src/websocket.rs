@@ -13,10 +13,8 @@ use tungstenite::protocol::CloseFrame;
 use crate::error::{S9Result, WebSocketError, ControlChannelError};
 
 // TODO: Refactor clients and structs/enums to separate files
-// TODO: Configurable if timeout is an error or expected behavior
-// TODO: All clients should create control channels internally
-// TODO: Convinient methods for send_binry, pong, pong, etc...
-// TODO: Provide access to underlysing streams
+// TODO: Convenient functions for send_binary, pong, pong, etc...
+// TODO: Provide access to underlying streams
 // TODO: Add Tests
 // TODO: Add API Documentation + change documentation pointer in Cargo.toml to something like https://docs.rs/s9_websocket/0.0.1
 // TODO: Add Code Documentation
@@ -46,22 +44,34 @@ macro_rules! send_or_log {
 // Public API Types
 // ============================================================================
 
-pub trait S9WebSocketClientHandler {
-    fn on_activated(&mut self) {
+pub trait S9WebSocketClientHandler<C> {
+    fn on_activated(&mut self, client: &mut C) {
         // Default: noop
+        let _ = client; // Suppress unused variable warning
     }
-    fn on_text_message(&mut self, data: &[u8]);
-    fn on_binary_message(&mut self, data: &[u8]);
-    fn on_connection_closed(&mut self, reason: Option<String>);
-    fn on_ping(&mut self, _data: &[u8]) {
+    fn on_poll(&mut self, client: &mut C) {
         // Default: noop
+        let _ = client;
     }
-    fn on_pong(&mut self, _data: &[u8]) {
+    fn on_idle(&mut self, client: &mut C) {
         // Default: noop
+        let _ = client;
     }
-    fn on_error(&mut self, error: String);
-    fn on_quit(&mut self) {
+    fn on_text_message(&mut self, client: &mut C, data: &[u8]);
+    fn on_binary_message(&mut self, client: &mut C, data: &[u8]);
+    fn on_connection_closed(&mut self, client: &mut C, reason: Option<String>);
+    fn on_ping(&mut self, client: &mut C, _data: &[u8]) {
         // Default: noop
+        let _ = client;
+    }
+    fn on_pong(&mut self, client: &mut C, _data: &[u8]) {
+        // Default: noop
+        let _ = client;
+    }
+    fn on_error(&mut self, client: &mut C, error: String);
+    fn on_quit(&mut self, client: &mut C) {
+        // Default: noop
+        let _ = client; //
     }
 }
 
@@ -174,7 +184,7 @@ impl BlockingOptions {
     }
 
     /// Sets the read timeout for the socket.
-    /// Must be None for the infinite blocking of socket read or greater than zero
+    /// Must be None for the indefinitely blocking of socket read or greater than zero
     pub fn read_timeout(mut self, timeout: Option<Duration>) -> S9Result<Self> {
         if let Some(timeout) = timeout {
             if timeout.is_zero() {
@@ -186,7 +196,7 @@ impl BlockingOptions {
     }
 
     /// Sets the write timeout for the socket.
-    /// /// Must be None for the infinite blocking of socket write or greater than zero
+    /// /// Must be None for the indefinitely blocking of socket write or greater than zero
     pub fn write_timeout(mut self, timeout: Option<Duration>) -> S9Result<Self> {
         if let Some(timeout) = timeout {
             if timeout.is_zero() {
@@ -282,7 +292,7 @@ mod shared {
                 Ok(ControlFlow::Continue)
             },
             ControlMessage::Close() => {
-                close_websocket(socket);
+                close_websocket_with_logging(socket, "ControlMessage::Close");
                 Ok(ControlFlow::Continue)
             },
             ControlMessage::ForceQuit() => {
@@ -290,44 +300,6 @@ mod shared {
                     tracing::trace!("Forcibly quitting message loop");
                 }
                 Ok(ControlFlow::Break)
-            }
-        }
-    }
-
-    /// Handles incoming WebSocket messages by calling appropriate handler methods
-    #[inline]
-    pub(crate) fn handle_message<H: S9WebSocketClientHandler>(msg: Message, handler: &mut H) -> ControlFlow {
-        match msg {
-            Message::Text(message) => {
-                trace_on_text_message(&message);
-                handler.on_text_message(message.as_bytes());
-                ControlFlow::Continue
-            },
-            Message::Binary(bytes) => {
-                trace_on_binary_message(&bytes);
-                handler.on_binary_message(&bytes);
-                ControlFlow::Continue
-            },
-            Message::Close(close_frame) => {
-                trace_on_close_frame(&close_frame);
-                let reason = close_frame.map(|cf| cf.to_string());
-                handler.on_connection_closed(reason);
-                handler.on_quit();
-                ControlFlow::Break
-            },
-            Message::Ping(bytes) => {
-                trace_on_ping_message(&bytes);
-                handler.on_ping(&bytes);
-                ControlFlow::Continue
-            },
-            Message::Pong(bytes) => {
-                trace_on_pong_message(&bytes);
-                handler.on_pong(&bytes);
-                ControlFlow::Continue
-            },
-            Message::Frame(_) => {
-                trace_on_frame();
-                ControlFlow::Continue
             }
         }
     }
@@ -380,20 +352,17 @@ mod shared {
         error_msg.contains("Connection closed") || error_msg.contains("closed")
     }
 
-    /// Closes WebSocket connection
-    pub(crate) fn close_websocket(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>) {
-        close_websocket_with_logging(socket, "on close");
-    }
-
     /// Closes WebSocket connection with context logging
     pub(crate) fn close_websocket_with_logging(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>, context: &str) {
-        socket.close(None)
-            .map(|_| {
-                tracing::trace!("Connection close successfully requested {}", context);
-            })
-            .unwrap_or_else(|e| {
-                tracing::error!("Error on connection close request {}: {}", context, e);
-            });
+        if socket.can_write() {
+            socket.close(None)
+                .map(|_| {
+                    tracing::trace!("Connection close successfully requested for context: {}", context);
+                })
+                .unwrap_or_else(|e| {
+                    tracing::error!("Error on connection close request for context {}: {}", context, e);
+                });
+        }
     }
 
     /// Traces connection establishment
@@ -621,6 +590,7 @@ impl S9AsyncNonBlockingWebSocketClient {
 pub struct S9NonBlockingWebSocketClient {
     socket: WebSocket<MaybeTlsStream<TcpStream>>,
     options: NonBlockingOptions,
+    running: bool,
 }
 
 impl S9NonBlockingWebSocketClient {
@@ -629,49 +599,61 @@ impl S9NonBlockingWebSocketClient {
     }
 
     pub fn connect_with_headers(uri: &str, headers: &HashMap<String, String>, options: NonBlockingOptions) -> S9Result<S9NonBlockingWebSocketClient> {
-        let (mut sock, _response) = shared::connect_socket(uri, headers)?;
+        let (mut socket, _response) = shared::connect_socket(uri, headers)?;
 
-        shared::configure_non_blocking(&mut sock, &options)?;
+        shared::configure_non_blocking(&mut socket, &options)?;
 
         Ok(S9NonBlockingWebSocketClient {
+            socket,
             options,
-            socket: sock,
+            running: true,
         })
     }
 
     #[inline]
-    pub fn run<HANDLER>(&mut self, handler: &mut HANDLER, control_rx: Receiver<ControlMessage>)
+    pub fn run<HANDLER>(&mut self, handler: &mut HANDLER)
     where
-        HANDLER: S9WebSocketClientHandler,
+        HANDLER: S9WebSocketClientHandler<Self>,
     {
         if tracing::enabled!(tracing::Level::DEBUG) {
             tracing::debug!("Starting event loop");
         }
 
         // Notify activate before entering the main loop
-        handler.on_activated();
+        handler.on_activated(self);
 
-        loop {
-            // 1. Check for control messages (non-blocking)
-            if let Ok(control_msg) = control_rx.try_recv() {
-                match shared::handle_control_message(control_msg, &mut self.socket) {
-                    Ok(shared::ControlFlow::Continue) => {},
-                    Ok(shared::ControlFlow::Break) => {
-                        handler.on_quit();
-                        break;
-                    },
-                    Err(error) => {
-                        handler.on_error(error);
-                    }
-                }
-            }
+        while self.running {
+            handler.on_poll(self);
 
-            // 2. Try to read from socket (non-blocking)
             match self.socket.read() {
                 Ok(msg) => {
-                    match shared::handle_message(msg, handler) {
-                        shared::ControlFlow::Continue => {},
-                        shared::ControlFlow::Break => break,
+                    match msg {
+                        Message::Text(message) => {
+                            shared::trace_on_text_message(&message);
+                            handler.on_text_message(self, message.as_bytes());
+                        },
+                        Message::Binary(bytes) => {
+                            shared::trace_on_binary_message(&bytes);
+                            handler.on_binary_message(self, &bytes);
+                        },
+                        Message::Close(close_frame) => {
+                            shared::trace_on_close_frame(&close_frame);
+                            let reason = close_frame.map(|cf| cf.to_string());
+                            handler.on_connection_closed(self, reason);
+                            handler.on_quit(self);
+                            break;
+                        },
+                        Message::Ping(bytes) => {
+                            shared::trace_on_ping_message(&bytes);
+                            handler.on_ping(self, &bytes);
+                        },
+                        Message::Pong(bytes) => {
+                            shared::trace_on_pong_message(&bytes);
+                            handler.on_pong(self, &bytes);
+                        },
+                        Message::Frame(_) => {
+                            shared::trace_on_frame();
+                        }
                     }
                 },
                 Err(error) => {
@@ -679,13 +661,15 @@ impl S9NonBlockingWebSocketClient {
                     if let Some(error_msg) = reason {
                         if should_break {
                             if shared::is_connection_closed_error(&error_msg) {
-                                handler.on_connection_closed(Some(error_msg));
+                                handler.on_connection_closed(self, Some(error_msg));
                             } else {
-                                handler.on_error(error_msg);
+                                handler.on_error(self, error_msg);
                             }
-                            handler.on_quit();
+                            handler.on_quit(self);
                             break;
                         }
+                    } else {
+                        handler.on_idle(self);
                     }
                 }
             };
@@ -701,6 +685,14 @@ impl S9NonBlockingWebSocketClient {
     pub fn send_text_message(&mut self, text: &str) -> S9Result<()> {
         shared::send_text_message_to_websocket(&mut self.socket, text)
     }
+
+    pub fn close(&mut self) {
+        shared::close_websocket_with_logging(&mut self.socket, "on close");
+    }
+
+    pub fn force_quit(&mut self) {
+        self.running = false;
+    }
 }
 
 // ============================================================================
@@ -710,6 +702,7 @@ impl S9NonBlockingWebSocketClient {
 pub struct S9BlockingWebSocketClient {
     socket: WebSocket<MaybeTlsStream<TcpStream>>,
     options: BlockingOptions,
+    running: bool,
 }
 
 impl S9BlockingWebSocketClient{
@@ -723,36 +716,26 @@ impl S9BlockingWebSocketClient{
         shared::configure_blocking(&mut socket, &options)?;
 
         Ok(S9BlockingWebSocketClient {
-            options,
             socket,
+            options,
+            running: true,
         })
     }
 
     #[inline]
-    pub fn run<HANDLER>(&mut self, handler: &mut HANDLER, control_rx: Receiver<ControlMessage>)
+    pub fn run<HANDLER>(&mut self, handler: &mut HANDLER)
     where
-        HANDLER: S9WebSocketClientHandler,
+        HANDLER: S9WebSocketClientHandler<Self>,
     {
         if tracing::enabled!(tracing::Level::DEBUG) {
             tracing::debug!("Starting event loop");
         }
 
         // Notify activate before entering the main loop
-        handler.on_activated();
+        handler.on_activated(self);
 
-        loop {
-            if let Ok(control_msg) = control_rx.try_recv() {
-                match shared::handle_control_message(control_msg, &mut self.socket) {
-                    Ok(shared::ControlFlow::Continue) => {},
-                    Ok(shared::ControlFlow::Break) => {
-                        handler.on_quit();
-                        break;
-                    },
-                    Err(error) => {
-                        handler.on_error(error);
-                    }
-                }
-            }
+        while self.running {
+            handler.on_poll(self);
 
             let msg = match self.socket.read() {
                 Ok(msg) => msg,
@@ -760,32 +743,44 @@ impl S9BlockingWebSocketClient{
                     match e {
                         Error::Io(ref err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                             if self.options.read_timeout.is_some() {
-                                // No data available, continue loop (expected in non-blocking mode using timeout)
+                                // No data available, call on_idle and continue loop (expected in non-blocking mode using timeout)
+                                handler.on_idle(self);
+
+                                // Optionally sleep to reduce CPU usage
+                                if let Some(duration) = self.options.shared.spin_wait_duration {
+                                    thread::sleep(duration);
+                                }
                                 continue;
                             } else {
-                                handler.on_error(format!("Error reading message: {}", e));
-                                handler.on_quit();
+                                handler.on_error(self, format!("Error reading message: {}", e));
+                                handler.on_quit(self);
                                 break;
                             }
                         },
                         Error::Io(ref err) if err.kind() == std::io::ErrorKind::TimedOut => {
                             if self.options.read_timeout.is_some() {
-                                // No data available (e.g. Windows), continue loop (expected in non-blocking mode using timeout)
+                                // No data available (e.g. Windows), call on_idle and continue loop (expected in non-blocking mode using timeout)
+                                handler.on_idle(self);
+
+                                // Optionally sleep to reduce CPU usage
+                                if let Some(duration) = self.options.shared.spin_wait_duration {
+                                    thread::sleep(duration);
+                                }
                                 continue;
                             } else {
-                                handler.on_error(format!("Error reading message: {}", e));
-                                handler.on_quit();
+                                handler.on_error(self, format!("Error reading message: {}", e));
+                                handler.on_quit(self);
                                 break;
                             }
                         }
                         Error::ConnectionClosed => {
-                            handler.on_connection_closed(Some("Connection closed".to_string()));
-                            handler.on_quit();
+                            handler.on_connection_closed(self, Some("Connection closed".to_string()));
+                            handler.on_quit(self);
                             break;
                         },
                         _ => {
-                            handler.on_error(format!("Error reading message: {}", e));
-                            handler.on_quit();
+                            handler.on_error(self, format!("Error reading message: {}", e));
+                            handler.on_quit(self);
                             break;
                         }
                     }
@@ -793,9 +788,33 @@ impl S9BlockingWebSocketClient{
                 }
             };
 
-            match shared::handle_message(msg, handler) {
-                shared::ControlFlow::Continue => {},
-                shared::ControlFlow::Break => break,
+            match msg {
+                Message::Text(message) => {
+                    shared::trace_on_text_message(&message);
+                    handler.on_text_message(self, message.as_bytes());
+                },
+                Message::Binary(bytes) => {
+                    shared::trace_on_binary_message(&bytes);
+                    handler.on_binary_message(self, &bytes);
+                },
+                Message::Close(close_frame) => {
+                    shared::trace_on_close_frame(&close_frame);
+                    let reason = close_frame.map(|cf| cf.to_string());
+                    handler.on_connection_closed(self, reason);
+                    handler.on_quit(self);
+                    break;
+                },
+                Message::Ping(bytes) => {
+                    shared::trace_on_ping_message(&bytes);
+                    handler.on_ping(self, &bytes);
+                },
+                Message::Pong(bytes) => {
+                    shared::trace_on_pong_message(&bytes);
+                    handler.on_pong(self, &bytes);
+                },
+                Message::Frame(_) => {
+                    shared::trace_on_frame();
+                }
             }
 
             // Optionally sleep to reduce CPU usage
@@ -809,6 +828,15 @@ impl S9BlockingWebSocketClient{
     pub fn send_text_message(&mut self, text: &str) -> S9Result<()> {
         shared::send_text_message_to_websocket(&mut self.socket, text)
     }
+
+    pub fn close(&mut self) {
+        shared::close_websocket_with_logging(&mut self.socket, "on close");
+    }
+
+    pub fn force_quit(&mut self) {
+        self.running = false;
+    }
+
 }
 
 impl Drop for S9AsyncNonBlockingWebSocketClient {

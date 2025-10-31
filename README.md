@@ -8,28 +8,29 @@
 A simplified high-performance low-latency Rust WebSocket client library providing three distinct implementations: async/threaded with channels, non-blocking with callbacks, and blocking with callbacks.
 
 ## Features
-- ⚡ **Low latency** - Built with [Rust](https://rust-lang.org) as a thin layer over [tungstenite-rs](https://docs.rs/tungstenite/latest/tungstenite) and option for [crossbeam-channel](https://docs.rs/crossbeam/latest/crossbeam/channel/index.html)
+- ⚡ **Low latency** - Built with [Rust](https://rust-lang.org) as a thin layer over [tungstenite-rs](https://docs.rs/tungstenite/latest/tungstenite) and optional for [crossbeam-channel](https://docs.rs/crossbeam/latest/crossbeam/channel/index.html)
 - 🚀 **Non-blocking, Blocking, Async Channels** - Choose the right approach for your use case
 - 🔒 **TLS backend** - Support for native-tls
-- 📡 **Event-driven architecture** - With either channels or handler callbacks
+- 📡 **Event-driven architecture** - With either handler callbacks or channels
 - 🎯 **Type-safe API** - Leverage Rust's type system for correctness
 - 📊 **Built-in tracing** - Comprehensive logging support
-- 🤖 **Vibe Coding Ready** - Support for AI-assisted development with [Claude](https://claude.ai)
+- 🤖 **AI Coding Ready** - Support for AI-assisted development with [Claude](https://claude.ai) (Vibe Coding)
 
 ## Design Principled
 - 🕑 **Predictable latency** - Direct system calls and callbacks, means lower baseline latency
-- 📋 **Low memory overhead** - No task scheduling, futures, or waker infrastructure
-- 🤯 **Simple mental model** - Straightforward usage
-- 📐 **Deterministic behavior** - Optional spin-wait duration gives precise control over CPU/latency tradeoff
+- 📋 **Low overhead** - No task scheduling, futures, or waker infrastructure
+- 🤯 **Simple model** - Straightforward usage
+- 📐 **Deterministic behavior** - Optional custom spin-wait duration gives precise control over CPU/latency tradeoff
 - 🚫️ **No runtime** - No async runtime or framework overhead, no `poll()`/`epoll_wait()`/`kevent()`
-- 🔁 **Async message passing** - Optional messaging through channels
-- ⛔️ **Graceful Shutdown** - Process all messages from in-queue util connection is closed by server
-- 📛 **Forcibly Shutdown** - Break the loop immediately
+- 🔁 **Async message passing** - Optional message passing through channels
+- ⛔️ **Graceful Shutdown** - Process all messages util connection is closed by server
+- 📛 **Forcibly Shutdown** - Break the client's event loop immediately
+- 📛 **Forcibly Shutdown** - Break the client's event loop immediately
 
 
 ## Disadvantages:
-- **Thread-per-connection** - None of the clients scale to thousands of connections (see Scalability Constraints)
-- **CPU overhead** - The fastest mode `non-blocking` **without** `spin-wait` utilizes 100% CPU core usage per design
+- **Scalability** - None of the clients scale to thousands of connections (see Scalability Constraints)
+- **CPU overhead** - The fastest mode `non-blocking` **without** `spin-wait` utilizes 100% CPU core usage by design
 
 ## Installation
 
@@ -100,29 +101,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Non-blocking Client (with handler callbacks)
 ```rust
-use s9_websocket::{S9NonBlockingWebSocketClient, S9WebSocketClientHandler, ControlMessage, NonBlockingOptions};
-use crossbeam_channel::unbounded;
+use s9_websocket::{S9NonBlockingWebSocketClient, S9WebSocketClientHandler, NonBlockingOptions};
 use std::time::Duration;
-use tungstenite::client;
 
 // Implement the handler trait
-struct MyHandler;
+struct MyHandler {
+   message_count: usize,
+}
 
-impl S9WebSocketClientHandler for MyHandler {
-   fn on_text_message(&mut self, data: &[u8]) {
+impl S9WebSocketClientHandler<S9NonBlockingWebSocketClient> for MyHandler {
+   fn on_text_message(&mut self, client: &mut S9NonBlockingWebSocketClient, data: &[u8]) {
       let text = String::from_utf8_lossy(data);
       println!("Received: {}", text);
+      self.message_count += 1;
+
+      if self.message_count >= 2 {
+         println!("Closing connection...");
+         client.close();
+      } else {
+         // Send another message
+         client.send_text_message(&format!("Echo: {}", text)).ok();
+      }
    }
 
-   fn on_binary_message(&mut self, data: &[u8]) {
+   fn on_binary_message(&mut self, _client: &mut S9NonBlockingWebSocketClient, data: &[u8]) {
       println!("Received binary: {} bytes", data.len());
    }
 
-   fn on_connection_closed(&mut self, reason: Option<String>) {
+   fn on_connection_closed(&mut self, _client: &mut S9NonBlockingWebSocketClient, reason: Option<String>) {
       println!("Connection closed: {:?}", reason);
    }
 
-   fn on_error(&mut self, error: String) {
+   fn on_error(&mut self, _client: &mut S9NonBlockingWebSocketClient, error: String) {
       eprintln!("Error: {}", error);
    }
 }
@@ -134,19 +144,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
    // Connect to WebSocket server
    let mut client = S9NonBlockingWebSocketClient::connect("wss://echo.websocket.org", options)?;
-   let mut handler = MyHandler;
-   let (control_tx, control_rx) = unbounded();
 
-   // Send a message and close from another thread
-   let tx = control_tx.clone();
-   std::thread::spawn(move || {
-      tx.send(ControlMessage::SendText("Hello!".to_string())).ok();
-      std::thread::sleep(Duration::from_secs(2));
-      tx.send(ControlMessage::Close()).ok();
-   });
+   // Send initial message
+   client.send_text_message("Hello!")?;
+
+   // Create handler
+   let mut handler = MyHandler { message_count: 0 };
 
    // Run the non-blocking event loop (blocks on this thread)
-   client.run(&mut handler, control_rx);
+   client.run(&mut handler);
 
    Ok(())
 }
@@ -155,59 +161,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Blocking Client
 
 ```rust
-use s9_websocket::{S9BlockingWebSocketClient, S9WebSocketClientHandler, ControlMessage, BlockingOptions};
-use crossbeam_channel::{unbounded, Sender};
-use std::time::Duration;
+use s9_websocket::{S9BlockingWebSocketClient, S9WebSocketClientHandler, BlockingOptions};
 
-// Implement the handler trait with a control channel
+// Implement the handler trait
 struct MyHandler {
-   tx: Sender<ControlMessage>,
+   message_count: usize,
 }
 
-impl S9WebSocketClientHandler for MyHandler {
-   fn on_text_message(&mut self, data: &[u8]) {
+impl S9WebSocketClientHandler<S9BlockingWebSocketClient> for MyHandler {
+   fn on_text_message(&mut self, client: &mut S9BlockingWebSocketClient, data: &[u8]) {
       let text = String::from_utf8_lossy(data);
       println!("Received: {}", text);
+      self.message_count += 1;
 
-      // Close after one echo
-      self.tx.send(ControlMessage::Close()).ok();
+      if self.message_count >= 2 {
+         println!("Closing connection...");
+         client.close();
+      } else {
+         // Send another message
+         client.send_text_message(&format!("Echo: {}", text)).ok();
+      }
    }
 
-   fn on_binary_message(&mut self, data: &[u8]) {
+   fn on_binary_message(&mut self, _client: &mut S9BlockingWebSocketClient, data: &[u8]) {
       println!("Received binary: {} bytes", data.len());
    }
 
-   fn on_connection_closed(&mut self, reason: Option<String>) {
+   fn on_connection_closed(&mut self, _client: &mut S9BlockingWebSocketClient, reason: Option<String>) {
       println!("Connection closed: {:?}", reason);
    }
 
-   fn on_error(&mut self, error: String) {
+   fn on_error(&mut self, _client: &mut S9BlockingWebSocketClient, error: String) {
       eprintln!("Error: {}", error);
    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-   // Configure with timeout (optional)
-   let options = BlockingOptions::new()
-           .read_timeout(Some(Duration::from_secs(30)))?;
+   // Configure with default blocking behavior
+   let options = BlockingOptions::new();
 
    // Connect to WebSocket server
    let mut client = S9BlockingWebSocketClient::connect("wss://echo.websocket.org", options)?;
-   let (control_tx, control_rx) = unbounded();
 
-   // Setup  handler with control channel
-   let mut handler = MyHandler{
-      tx: control_tx.clone(),
-   };
+   // Send initial message
+   client.send_text_message("Hello!")?;
 
-   // Send a message from another thread
-   let tx = control_tx.clone();
-   std::thread::spawn(move || {
-      tx.send(ControlMessage::SendText("Hello!".to_string())).ok();
-   });
+   // Create handler
+   let mut handler = MyHandler { message_count: 0 };
 
    // Run the blocking event loop (blocks on this thread)
-   client.run(&mut handler, control_rx);
+   // Handler can call client functions directly from callbacks
+   client.run(&mut handler);
 
    Ok(())
 }
@@ -231,12 +235,12 @@ let client = S9NonBlockingWebSocketClient::connect_with_headers(
 
 ### Handling Ping/Pong
 ```rust
-impl S9WebSocketClientHandler for MyHandler {
-    fn on_ping(&mut self, data: &[u8]) {
+impl S9WebSocketClientHandler<S9NonBlockingWebSocketClient> for MyHandler {
+    fn on_ping(&mut self, _client: &mut S9NonBlockingWebSocketClient, data: &[u8]) {
         println!("Received ping: {:?}", data);
     }
 
-    fn on_pong(&mut self, data: &[u8]) {
+    fn on_pong(&mut self, _client: &mut S9NonBlockingWebSocketClient, data: &[u8]) {
         println!("Received pong: {:?}", data);
     }
 }
@@ -273,7 +277,7 @@ Spawns a background thread for socket operations and communicates via channels.
 - Configurable CPU/latency trade-off via spin-wait duration
 - Configurable socket options like TCP_NODELAY, TTL, etc
 
-#### Methods
+#### Functions
 - `connect(uri: &str, options: NonBlockingOptions) -> S9Result<Self>`
 - `connect_with_headers(uri: &str, headers: &HashMap<String, String>, options: NonBlockingOptions) -> S9Result<Self>`
 - `run(&mut self) -> S9Result<JoinHandle<()>>` - Starts background thread
@@ -292,16 +296,18 @@ Pure non-blocking client that runs on caller's thread using handler callbacks fo
 #### Key Features
 - Runs entirely on caller's thread
 - Receive events through handler callbacks (zero copy, zero allocation)
-- Send commands through external control channel
+- Call client functions directly from handler callbacks (send, close, force_quit)
 - Lowest possible latency
 - Configurable CPU/latency trade-off via spin-wait duration
 - Configurable socket options like TCP_NODELAY, TTL, etc
 
-#### Methods
+#### Functions
 - `connect(uri: &str, options: NonBlockingOptions) -> S9Result<Self>`
 - `connect_with_headers(uri: &str, headers: &HashMap<String, String>, options: NonBlockingOptions) -> S9Result<Self>`
-- `run<HANDLER>(&mut self, handler: &mut HANDLER, control_rx: Receiver<ControlMessage>)` - Blocks on this thread
+- `run<HANDLER>(&mut self, handler: &mut HANDLER)` - Blocks on this thread, passes `&mut self` to handler functions
 - `send_text_message(&mut self, text: &str) -> S9Result<()>`
+- `close(&mut self)` - Sends Close Frame to server
+- `force_quit(&mut self)` - Immediately breaks event loop
 
 ### S9BlockingWebSocketClient
 
@@ -313,16 +319,18 @@ Synchronous client that runs on caller's thread using handler callbacks for even
 
 - Runs entirely on caller's thread
 - Receive events through handler callbacks (zero copy, zero allocation)
-- Send commands through external control channel
+- Call client functions directly from handler callbacks (send, close, force_quit)
 - Optional read/write timeouts for responsive control message handling (simulates non-blocking behavior)
 - Configurable CPU/latency trade-off via spin-wait duration
 - Configurable socket options like TCP_NODELAY, TTL, etc
 
-#### Methods
+#### Functions
 - `connect(uri: &str, options: BlockingOptions) -> S9Result<Self>`
 - `connect_with_headers(uri: &str, headers: &HashMap<String, String>, options: BlockingOptions) -> S9Result<Self>`
-- `run<HANDLER>(&mut self, handler: &mut HANDLER, control_rx: Receiver<ControlMessage>)` - Blocks on this thread
+- `run<HANDLER>(&mut self, handler: &mut HANDLER)` - Blocks on this thread, passes `&mut self` to handler functions
 - `send_text_message(&mut self, text: &str) -> S9Result<()>`
+- `close(&mut self)` - Sends Close Frame to server
+- `force_quit(&mut self)` - Immediately breaks event loop
 
 ### Shared Types
 
@@ -342,19 +350,29 @@ pub enum WebSocketEvent {
 ```
 
 #### S9WebSocketClientHandler
-Used by S9NonBlockingWebSocketClient and S9BlockingWebSocketClient for callback-based event delivery:
+Used by S9NonBlockingWebSocketClient and S9BlockingWebSocketClient for callback-based event delivery.
+The trait is generic over the client type (`C`), which is passed as `&mut C` to each handler function.
+
 ```rust
-pub trait S9WebSocketClientHandler {
-   fn on_activated(&mut self) {}                                // Event loop started (default: noop)
-   fn on_text_message(&mut self, data: &[u8]);                  // Text message received
-   fn on_binary_message(&mut self, data: &[u8]);                // Binary message received
-   fn on_connection_closed(&mut self, reason: Option<String>);  // Connection closed
-   fn on_error(&mut self, error: String);                       // Error occurred
-   fn on_ping(&mut self, _data: &[u8]) {}                       // Ping frame received (default: noop)
-   fn on_pong(&mut self, _data: &[u8]) {}                       // Pong frame received (default: noop)
-   fn on_quit(&mut self) {}                                     // Client quitting (default: noop)
+pub trait S9WebSocketClientHandler<C> {
+   fn on_activated(&mut self, client: &mut C) {}                               // Event loop started (default: noop)
+   fn on_poll(&mut self, client: &mut C) {}                                    // Called every loop iteration before socket read (default: noop)
+   fn on_idle(&mut self, client: &mut C) {}                                    // Called only when no data available (default: noop)
+   fn on_text_message(&mut self, client: &mut C, data: &[u8]);                 // Text message received
+   fn on_binary_message(&mut self, client: &mut C, data: &[u8]);               // Binary message received
+   fn on_connection_closed(&mut self, client: &mut C, reason: Option<String>); // Connection closed
+   fn on_error(&mut self, client: &mut C, error: String);                      // Error occurred
+   fn on_ping(&mut self, client: &mut C, _data: &[u8]) {}                      // Ping frame received (default: noop)
+   fn on_pong(&mut self, client: &mut C, _data: &[u8]) {}                      // Pong frame received (default: noop)
+   fn on_quit(&mut self, client: &mut C) {}                                    // Client quitting (default: noop)
 }
 ```
+
+**Event Loop Lifecycle, Callback Priority and Use Cases:**
+- `on_activated()`: Called once **before** entering the event loop. Use for initialization tasks.
+- `on_poll()`: Called on **every** event loop iteration **before** reading from socket. Use for highest priority tasks.
+- `on_idle()`: Called **only** when no data is available (WouldBlock/TimedOut errors). Use for lower priority tasks.
+- `on_quit()`: Called once **when** event loop is about to break. Use graceful shutdown tasks.
 
 ### ControlMessage
 ```rust
@@ -366,13 +384,16 @@ pub enum ControlMessage {
 ```
 
 ### Close and Quit
-Graceful close is implemented by `Drop` trait. Graceful close means a Close Frame is sent to the server.
-Whenever a Close frame is received from the server
+Graceful close means a Close Frame is sent to the server.  When a Close frame is received from the server (either initiated by client or server):
 - **non-blocking**: a `WebSocketEvent::ConnectionClosed` is published, followed by a `WebSocketEvent::Quit` event before breaking the socket and control channel poll loop
 - **blocking**: the `S9WebSocketClientHandler::on_connection_closed()` callback is invoked, followed by a `S9WebSocketClientHandler::on_quit()` call before breaking the socket and control channel poll loop
 
+Sending a Close fame is implemented by `Drop` trait as well, but due to the immediate drop:
+- **non-blocking**: `S9WebSocketClientHandler::on_quit()` is not called
+- **blocking**: `WebSocketEvent::Quit` event is not generated
+
 ### Force Quit
-Send a 'ControlMessage::ForceQuit' to immediatelly break the socket and control channel poll loop
+Send a 'ControlMessage::ForceQuit' to immediately break event loop
 
 ## Logging
 The library uses the 'tracing' crate for logging. Enable logging in your application:
@@ -484,7 +505,7 @@ if let Err(e) = client.control_tx.send(ControlMessage::SendText("Hello".to_strin
 
 **None of the clients scale to thousands of connections.**
 
-The library's architecture requires one OS thread per connection because each client's `run()` method either
+The library's architecture requires one OS thread per connection because each client's `run()` function either
 spawns a dedicated thread (async client) or blocks the caller's thread indefinitely (non-blocking and blocking client).
 There is no I/O multiplexing support to run multiple connections on a single thread.
 For 1000+ connections, use async/await libraries like [tokio-tungstenite](https://docs.rs/tokio-tungstenite) or [async-tungstenite](https://docs.rs/async-tungstenite) that provide

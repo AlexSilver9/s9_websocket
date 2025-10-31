@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start the event loop, which will start thread and return the handle immediately
     let client_thread = client.run()?;
 
-    // Send a test message
+    // Send a text message
     client.send_text_message("Hello from s9_websocket!".to_string())?;
     println!("Sent: Hello from s9_websocket!");
 
