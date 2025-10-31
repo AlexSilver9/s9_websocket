@@ -1,7 +1,5 @@
 pre-release-replacements = [
     {file="README.md", search="s9_websocket = .*", replace="{{crate_name}} = \"{{version}}\""},
-    {file="CLAUDE.md", search="s9_websocket = .*", replace="{{crate_name}} = \"{{version}}\""},
-    {file="src/lib.rs", search="s9_websocket = .*", replace="{{crate_name}} = \"{{version}}\""},
 
     # keep unreleased changes in an Unreleased section
     {file="CHANGELOG.md", search="Unreleased", replace="{{version}}"},
