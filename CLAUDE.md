@@ -47,7 +47,7 @@ The library provides three distinct client implementations, each optimized for d
 | Threading        | Caller's thread                 | Caller's thread                                  | Spawns thread                     |
 | Socket Mode      | Non-blocking                    | Blocking with optional timeout                   | Non-blocking                      |
 | Event Delivery   | Handler callbacks               | Handler callbacks                                | Channels (`event_rx`)             |
-| Control Messages | Direct function calls on client | Direct function calls on client                  | Built-in (`control_tx`)           |
+| Control Messages | Direct method calls on client   | Direct method calls on client                    | Built-in (`control_tx`)           |
 | CPU Usage        | Configurable via spin_wait      | Low (blocks on read / write)                     | Configurable via spin_wait        |
 | Use Case         | Single-thread non-blocking      | Simple blocking apps (non-blocking when timeout) | Multi-threaded async apps         |
 
@@ -55,7 +55,7 @@ The library provides three distinct client implementations, each optimized for d
 The "pure" non-blocking client with handler callbacks (zero overhead):
 - **Threading model**: Runs entirely on caller's thread (no thread spawning)
 - **Communication**: Uses handler trait (`S9WebSocketClientHandler<Self>`) for direct callbacks
-  - Handler receives `&mut self` as a parameter to each callback function
+  - Handler receives `&mut self` as a parameter to each callback method
   - Can call `send_text_message()`, `send_binary_message()`, `send_ping()`, `send_pong()`, `close()`, `force_quit()` directly from handler callbacks
 - **Socket mode**: Non-blocking socket with `set_nonblocking(true)`
 - **Performance tuning**: Same `NonBlockingOptions::spin_wait_duration` as async client
@@ -66,7 +66,7 @@ The "pure" non-blocking client with handler callbacks (zero overhead):
 The synchronous blocking client:
 - **Threading model**: Runs entirely on caller's thread
 - **Communication**: Uses handler trait (`S9WebSocketClientHandler<Self>`) for direct callbacks
-  - Handler receives `&mut self` as a parameter to each callback function
+  - Handler receives `&mut self` as a parameter to each callback method
   - Can call `send_text_message()`, `send_binary_message()`, `send_ping()`, `send_pong()`, `close()`, `force_quit()` directly from handler callbacks
 - **Socket mode**: Blocking socket reads (can be configured with timeout via `BlockingOptions` to simulate non-blocking behavior)
 - **Performance tuning**: `BlockingOptions::spin_wait_duration` controls CPU/latency tradeoff with same options as async client
@@ -102,7 +102,7 @@ The library uses a single unified error type:
 Errors are exposed via:
 - **Non-blocking**: `WebSocketEvent::Error(String)` through `event_rx` channel
 - **Blocking**: `S9WebSocketClientHandler::on_error(String)` callback
-- **Result types**: All public API functions return `S9Result<T>` (alias for `Result<T, S9WebSocketError>`)
+- **Result types**: All public API methods return `S9Result<T>` (alias for `Result<T, S9WebSocketError>`)
 
 ### Connection Lifecycle
 All clients follow a similar lifecycle:
@@ -141,20 +141,20 @@ Each client has different memory allocation characteristics based on their archi
 #### S9NonBlockingWebSocketClient (Zero Allocations)
 **Zero-Copy Message Delivery:**
 - Handler callbacks receive `&[u8]` slice references directly from tungstenite messages
-- Handler receives `&mut` client reference to call functions directly (no channel overhead)
+- Handler receives `&mut` client reference to call methods directly (no channel overhead)
 
-**Direct Function Calls:**
-- Direct function calls from handler callbacks
+**Direct Method Calls:**
+- Direct method calls from handler callbacks
 
 **Rationale:** Single-threaded execution allows zero-copy message delivery via slice references. This is the most memory-efficient implementation.
 
 #### S9BlockingWebSocketClient (Zero Allocations)
 **Zero-Copy Message Delivery:**
 - Handler callbacks receive `&[u8]` slice references directly from tungstenite messages
-- Handler receives `&mut` client reference to call functions directly (no channel overhead)
+- Handler receives `&mut` client reference to call methods directly (no channel overhead)
 
-**Direct Function Calls:**
-- Direct function calls from handler callbacks
+**Direct Method Calls:**
+- Direct method calls from handler callbacks
 
 **Rationale:** Single-threaded execution allows zero-copy message delivery via slice references. This is the most memory-efficient implementation.
 
@@ -171,7 +171,7 @@ Each client has different memory allocation characteristics based on their archi
 
 **None of the clients scale to thousands of connections.**
 
-The library's architecture requires one OS thread per connection because each client's `run()` function either spawns a dedicated thread or blocks the caller's thread indefinitely.
+The library's architecture requires one OS thread per connection because each client's `run()` method either spawns a dedicated thread or blocks the caller's thread indefinitely.
 There is no I/O multiplexing support to run multiple connections on a single thread.
 
 ## Code Modules and Key Types

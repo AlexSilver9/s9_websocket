@@ -61,12 +61,12 @@ Pure non-blocking client that runs on caller's thread using handler callbacks fo
 
 **Socket Mode:** Uses non-blocking socket I/O (`set_nonblocking(true)`) internally. The name "NonBlocking" refers to the socket I/O mode, not the behavior of `run()` which blocks the calling thread indefinitely.
 
-**Flushing**: All send functions flush immediately after write
+**Flushing**: All send methods flush immediately after write
 
 #### Key Features
 - Runs entirely on caller's thread
 - Receive events through handler callbacks (zero copy, zero allocation)
-- Call client functions directly from handler callbacks (send, close, force_quit)
+- Call client methods directly from handler callbacks (send, close, force_quit)
 - Lowest possible latency
 - Configurable CPU/latency trade-off via spin-wait duration
 - Configurable socket options like TCP_NODELAY, TTL, etc
@@ -132,13 +132,13 @@ Synchronous client that runs on caller's thread using handler callbacks for even
 
 **Socket Mode:** Uses blocking socket I/O (standard socket reads/writes) internally, with optional timeouts. The name "Blocking" refers to the socket I/O mode, not the behavior of `run()` which blocks the calling thread indefinitely (same as S9NonBlockingWebSocketClient).
 
-**Flushing**: All send functions flush immediately after write
+**Flushing**: All send methods flush immediately after write
 
 #### Key Features
 
 - Runs entirely on caller's thread
 - Receive events through handler callbacks (zero copy, zero allocation)
-- Call client functions directly from handler callbacks (send, close, force_quit)
+- Call client methods directly from handler callbacks (send, close, force_quit)
 - Optional read/write timeouts for responsive control message handling (simulates non-blocking behavior)
 - Configurable CPU/latency trade-off via spin-wait duration
 - Configurable socket options like TCP_NODELAY, TTL, etc
@@ -190,7 +190,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
    let mut handler = MyHandler { message_count: 0 };
 
    // Run the blocking event loop (blocks on this thread)
-   // Handler can call client functions directly from callbacks
+   // Handler can call client methods directly from callbacks
    client.run(&mut handler);
 
    Ok(())
@@ -203,7 +203,7 @@ Spawns a background thread for socket operations and communicates via channels.
 
 **Socket Mode:** Uses non-blocking socket I/O (`set_nonblocking(true)`) internally. The name "NonBlocking" refers to the socket I/O mode, not the behavior of `run()` which returns immediately after spawning the thread.
 
-**Flushing**: All send functions flush immediately after write
+**Flushing**: All send methods flush immediately after write
 
 #### Key Features
 - Background thread handles all socket operations
@@ -347,7 +347,7 @@ tracing_subscriber::fmt()
 
 **None of the clients scale to thousands of connections.**
 
-The library's architecture requires one OS thread per connection because each client's `run()` function either
+The library's architecture requires one OS thread per connection because each client's `run()` method either
 spawns a dedicated thread (async client) or blocks the caller's thread indefinitely (non-blocking and blocking client).
 There is no I/O multiplexing support to run multiple connections on a single thread.
 For 1000+ connections, use async/await libraries like [tokio-tungstenite](https://docs.rs/tokio-tungstenite) or [async-tungstenite](https://docs.rs/async-tungstenite) that provide

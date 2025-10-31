@@ -25,7 +25,7 @@
 //! - Runs on caller's thread
 //! - Non-blocking socket I/O
 //! - Zero-copy message delivery via callbacks
-//! - Direct function calls from handler
+//! - Direct method calls from handler
 //! - Lowest latency
 //!
 //! ### 2. [`S9BlockingWebSocketClient`]
@@ -37,7 +37,7 @@
 //! - Runs on caller's thread
 //! - Blocking socket I/O (with optional timeouts)
 //! - Zero-copy message delivery via callbacks
-//! - Direct function calls from handler
+//! - Direct method calls from handler
 //! - Simple synchronous model
 //!
 //! ### 3. [`S9AsyncNonBlockingWebSocketClient`]

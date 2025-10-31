@@ -42,7 +42,7 @@ pub(crate) use send_or_log;
 /// through callback methods.
 ///
 /// The trait is generic over the client type `C`, which is passed as `&mut C` to each handler
-/// method, allowing direct calls to client functions from within callbacks.
+/// method, allowing direct calls to client methods from within callbacks.
 ///
 /// # Event Loop Lifecycle
 ///
@@ -195,7 +195,7 @@ pub trait S9WebSocketClientHandler<C> {
     /// **Default**: No-op (does nothing)
     ///
     /// # Parameters
-    /// - `client`: Mutable reference to the client, allowing direct function calls
+    /// - `client`: Mutable reference to the client, allowing direct method calls
     /// - `data`: Raw UTF-8 bytes of the text message
     ///
     /// # Note
@@ -210,7 +210,7 @@ pub trait S9WebSocketClientHandler<C> {
     /// **Default**: No-op (does nothing)
     ///
     /// # Parameters
-    /// - `client`: Mutable reference to the client, allowing direct function calls
+    /// - `client`: Mutable reference to the client, allowing direct method calls
     /// - `data`: Raw bytes of the binary message
     ///
     /// # Note
