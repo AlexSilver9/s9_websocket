@@ -101,7 +101,7 @@ pub enum S9WebSocketError {
     /// ```
     ConnectionClosed(Option<String>),
 
-    /// Socket is unavailable because it was already moved to a background thread.
+    /// Socket is unavailable because it was already moved to event loop thread.
     ///
     /// This error only occurs with [`S9AsyncNonBlockingWebSocketClient`](crate::S9AsyncNonBlockingWebSocketClient)
     /// when attempting to call [`run()`](crate::S9AsyncNonBlockingWebSocketClient::run) multiple times.

@@ -133,6 +133,24 @@ impl S9NonBlockingWebSocketClient {
     pub fn force_quit(&mut self) {
         self.running = false;
     }
+
+    /// Returns a reference to the underlying WebSocket.
+    ///
+    /// This provides low-level access to the tungstenite WebSocket for advanced use cases.
+    /// Use with caution as direct manipulation may interfere with the client's operation.
+    #[inline]
+    pub fn get_socket(&self) -> &WebSocket<MaybeTlsStream<TcpStream>> {
+        &self.socket
+    }
+
+    /// Returns a mutable reference to the underlying WebSocket.
+    ///
+    /// This provides low-level access to the tungstenite WebSocket for advanced use cases.
+    /// Use with caution as direct manipulation may interfere with the client's operation.
+    #[inline]
+    pub fn get_socket_mut(&mut self) -> &mut WebSocket<MaybeTlsStream<TcpStream>> {
+        &mut self.socket
+    }
 }
 
 impl Drop for S9NonBlockingWebSocketClient {

@@ -163,6 +163,25 @@
 //! # }
 //! ```
 //!
+//! ## Accessing the Underlying Socket
+//!
+//! All clients provide access to the underlying tungstenite WebSocket for advanced use cases:
+//!
+//! ```no_run
+//! # use s9_websocket::{S9NonBlockingWebSocketClient, NonBlockingOptions};
+//! # let options = NonBlockingOptions::new();
+//! # let mut client = S9NonBlockingWebSocketClient::connect("wss://echo.websocket.org", options)?;
+//! // Get immutable reference to the socket
+//! let socket = client.get_socket();
+//!
+//! // Get mutable reference to the socket
+//! let socket_mut = client.get_socket_mut();
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! **Note for S9AsyncNonBlockingWebSocketClient**: Socket access returns `Option<&WebSocket>`
+//! because the socket is moved to a background thread after calling `run()`.
+//!
 //! ## Performance Tips
 //!
 //! 1. **Tune spin wait duration**: Balance CPU usage vs latency
@@ -213,6 +232,5 @@ mod error;
 pub use websocket::*;
 pub use error::{S9Result, S9WebSocketError};
 
-// TODO: Provide access to underlying streams
-// TODO: Implement support for rustls / wolfssl
+// TODO: Add support for rustls wolfssl
 // TODO: Add Tests

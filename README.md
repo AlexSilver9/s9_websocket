@@ -25,7 +25,6 @@ A simplified high-performance low-latency Rust WebSocket client library providin
 - 🔁 **Async message passing** - Optional message passing through channels
 - ⛔️ **Graceful Shutdown** - Process all messages util connection is closed by server on graceful shutdown
 - 📛 **Forcibly Shutdown** - Break the client's event loop immediately
-- 📛 **Forcibly Shutdown** - Break the client's event loop immediately
 
 
 ## Disadvantages:
@@ -298,6 +297,27 @@ let options = NonBlockingOptions::new(Some(Duration::from_millis(10)))?;
 // Low CPU usage (100ms sleep between reads, higher latency)
 let options = NonBlockingOptions::new(Some(Duration::from_millis(100)))?;
 ```
+
+### Accessing the Underlying Socket
+
+All clients provide low-level access to the underlying tungstenite WebSocket for advanced use cases:
+
+```rust
+use s9_websocket::{S9NonBlockingWebSocketClient, NonBlockingOptions};
+
+let options = NonBlockingOptions::new();
+let mut client = S9NonBlockingWebSocketClient::connect("wss://echo.websocket.org", options)?;
+
+// Get immutable reference to the socket
+let socket = client.get_socket();
+
+// Get mutable reference to the socket for advanced operations
+let socket_mut = client.get_socket_mut();
+```
+
+**Note for S9AsyncNonBlockingWebSocketClient**: Socket access returns `Option<&WebSocket>` because the socket is moved to event loop thread after calling `run()`. Socket access is only available before `run()` is called.
+
+**Use with caution**: Direct manipulation of the underlying socket may interfere with the client's operation.
 
 ## Logging
 The library uses the 'tracing' crate for logging. Enable logging in your application:

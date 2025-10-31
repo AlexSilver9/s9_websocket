@@ -46,6 +46,26 @@ impl S9AsyncNonBlockingWebSocketClient {
         })
     }
 
+    /// Returns a reference to the underlying WebSocket if it hasn't been moved to the event loop thread yet.
+    ///
+    /// This provides low-level access to the tungstenite WebSocket for advanced use cases.
+    /// Note: This will return `None` after `run()` has been called, as the socket is moved to the event loop thread.
+    /// Use with caution as direct manipulation may interfere with the client's operation.
+    #[inline]
+    pub fn get_socket(&self) -> Option<&WebSocket<MaybeTlsStream<TcpStream>>> {
+        self.socket.as_ref()
+    }
+
+    /// Returns a mutable reference to the underlying WebSocket if it hasn't been moved to the event loop thread yet.
+    ///
+    /// This provides low-level access to the tungstenite WebSocket for advanced use cases.
+    /// Note: This will return `None` after `run()` has been called, as the socket is moved to the event loop thread.
+    /// Use with caution as direct manipulation may interfere with the client's operation.
+    #[inline]
+    pub fn get_socket_mut(&mut self) -> Option<&mut WebSocket<MaybeTlsStream<TcpStream>>> {
+        self.socket.as_mut()
+    }
+
     #[inline]
     pub fn run(&mut self) -> S9Result<JoinHandle<()>> {
         // Take ownership of the socket to put it into the tread by replacing it with a dummy value

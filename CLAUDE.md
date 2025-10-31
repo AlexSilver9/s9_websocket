@@ -271,10 +271,25 @@ git cliff -o CHANGELOG.md
 cargo release <type>
 ```
 
+## Socket Access
+
+All three clients provide low-level access to the underlying tungstenite WebSocket:
+
+### S9NonBlockingWebSocketClient & S9BlockingWebSocketClient
+- `get_socket() -> &WebSocket<MaybeTlsStream<TcpStream>>` - Get immutable reference
+- `get_socket_mut() -> &mut WebSocket<MaybeTlsStream<TcpStream>>` - Get mutable reference
+
+### S9AsyncNonBlockingWebSocketClient
+- `get_socket() -> Option<&WebSocket<MaybeTlsStream<TcpStream>>>` - Get immutable reference (None after `run()`)
+- `get_socket_mut() -> Option<&mut WebSocket<MaybeTlsStream<TcpStream>>>` - Get mutable reference (None after `run()`)
+
+**Note**: The async client returns `Option` because the socket is moved to a background thread when `run()` is called. Socket access is only available before calling `run()`.
+
+**Use with caution**: Direct manipulation of the socket may interfere with the client's operation.
+
 ## Known Limitations & Future Work
 1. **TLS backends**: Only `native-tls` currently supported (`rustls` and maybe `wolfssl` planned)
 2. **Testing**: No tests exist yet
-3. **Documentation**: No comprehensive API and code documentation yet
 
 ## Project Information
 - **License**: MIT / Apache-2.0
