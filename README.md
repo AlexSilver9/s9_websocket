@@ -37,7 +37,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-s9_websocket = "0.0.1"
+s9_websocket = "0.0.2"
 ```
 
 ## TLS Backend Selection
