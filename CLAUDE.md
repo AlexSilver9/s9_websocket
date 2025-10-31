@@ -2,38 +2,34 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-See @README for project overview.
+See @README for project overview and user-facing documentation.
 
-## Project Overview
-s9_websocket is a lightweight, low-latency Rust WebSocket client library providing three distinct implementations: async/threaded with channels, non-blocking with callbacks, and blocking with callbacks. Built on top of [tungstenite-rs](https://docs.rs/tungstenite/latest/tungstenite) and [crossbeam-channel](https://docs.rs/crossbeam/latest/crossbeam/channel/index.html).
+## Quick Reference
+
+### Most Important Files
+- `src/websocket.rs` - All three client implementations
+- `src/error.rs` - Error types
+- `src/lib.rs` - Public API exports
+- `examples/` - Usage examples for each client type
 
 ## Development Commands
-
-### Building and Testing
 ```bash
-# Build the library
+# Build and check
 cargo build
-
-# Build with release optimizations
-cargo build --release
+cargo check
 
 # Run examples (demonstrates all three client types)
 cargo run --example echo_client_non_blocking_async  # S9AsyncNonBlockingWebSocketClient (spawns thread, channels)
 cargo run --example echo_client_non_blocking        # S9NonBlockingWebSocketClient (caller thread, handler)
 cargo run --example echo_client_blocking            # S9BlockingWebSocketClient (caller thread, handler)
 cargo run --example echo_client_blocking_timeout    # S9BlockingWebSocketClient with timeout (caller thread, handler)
-
-# Check code without building
-cargo check
 ```
 
-## Architecture
+## Project Overview
 
-### Core Module Structure
-The codebase is organized into three main modules:
-- `src/lib.rs` - Public API exports and crate-level documentation
-- `src/websocket.rs` - All WebSocket client implementations (blocking and non-blocking)
-- `src/error.rs` - Comprehensive error type hierarchy
+s9_websocket is a lightweight, low-latency Rust WebSocket client library providing three distinct implementations: async/threaded with channels, non-blocking with callbacks, and blocking with callbacks. Built on top of [tungstenite-rs](https://docs.rs/tungstenite/latest/tungstenite) and [crossbeam-channel](https://docs.rs/crossbeam/latest/crossbeam/channel/index.html).
+
+## Architecture
 
 ### Three Client Implementations
 
@@ -157,7 +153,7 @@ Each client has different memory allocation characteristics based on their archi
 
 #### Error Path Allocations
 
-- All clients may be allocate error strings on error paths  (e.g., `format!("Error reading message: {}", e)`)
+- All clients may be allocated error strings on error paths  (e.g., `format!("Error reading message: {}", e)`)
 
 ### Memory Efficiency Summary
 1. **Most efficient**: S9NonBlockingWebSocketClient and S9BlockingWebSocketClient (zero-copy message delivery)
