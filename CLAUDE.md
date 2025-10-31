@@ -86,10 +86,15 @@ The synchronous blocking client:
 - **Use case**: Simple synchronous applications where blocking is acceptable
 
 ### Error Handling Architecture
-The library uses a hierarchical custom error system with three main types:
-- `S9WebSocketError` - Top-level error encompassing all operation types
+The library uses a single unified error type:
+- `S9WebSocketError` - Encompasses all WebSocket operation errors including:
   - `WebSocket(WebSocketError)` - Connection, I/O, protocol errors
-  - `ControlChannel(ControlChannelError)` - Internal channel communication errors
+  - `InvalidUri(String)` - Invalid URI provided
+  - `ConnectionClosed(Option<String>)` - Connection closed with optional reason
+  - `SocketUnavailable` - Socket already moved to thread
+  - `InvalidConfiguration(String)` - Invalid configuration
+  - `Io(std::io::Error)` - I/O errors
+  - `Tungstenite(TungsteniteError)` - Underlying tungstenite errors
 
 Errors are exposed via:
 - **Non-blocking**: `WebSocketEvent::Error(String)` through `event_rx` channel
@@ -195,9 +200,7 @@ There is no I/O multiplexing support to run multiple connections on a single thr
 - `BlockingOptions` - Configuration for blocking client (with timeout support)
 
 ### Error Types (in `src/error.rs`)
-- `S9WebSocketError` - Top-level error type
-- `WebSocketError` - WebSocket-specific errors
-- `ControlChannelError` - Channel communication errors
+- `S9WebSocketError` - Library- and WebSocket-specific errors
 - `S9Result<T>` - Convenience type alias
 
 ## Coding Conventions
@@ -255,10 +258,9 @@ cargo release <type>
 ```
 
 ## Known Limitations & Future Work
-1. **Code organization**: All logic in `src/websocket.rs` - should be split into separate files
-3. **TLS backends**: Only `native-tls` currently supported (`rustls` and maybe `wolfssl` planned)
-4. **Testing**: No tests exist yet
-5. **Documentation**: No comprehensive API and code documentation yet
+1. **TLS backends**: Only `native-tls` currently supported (`rustls` and maybe `wolfssl` planned)
+2. **Testing**: No tests exist yet
+3. **Documentation**: No comprehensive API and code documentation yet
 
 ## Project Information
 - **License**: MIT / Apache-2.0

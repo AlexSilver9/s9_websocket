@@ -6,4 +6,4 @@ mod websocket;
 mod error;
 
 pub use websocket::*;
-pub use error::{S9Result, S9WebSocketError, WebSocketError, ControlChannelError};
+pub use error::{S9Result, S9WebSocketError};

@@ -428,14 +428,8 @@ The library uses a custom error hierarchy for error categorization:
 ### Error Types
 
 ```rust
-/// Top-level error type for all S9WebSocket operations
+/// Library error type for WebSocket-specific errors
 pub enum S9WebSocketError {
-    WebSocket(WebSocketError),           // WebSocket-related errors
-    ControlChannel(ControlChannelError), // Internal channel errors
-}
-
-/// WebSocket-specific errors
-pub enum WebSocketError {
     ConnectionClosed(Option<String>),    // Connection closed by server
     InvalidUri(String),                  // Invalid WebSocket URI
     Io(std::io::Error),                  // I/O errors
@@ -444,25 +438,20 @@ pub enum WebSocketError {
     InvalidConfiguration(String),        // Invalid client configuration
 }
 
-/// Internal control channel errors
-pub enum ControlChannelError {
-    SendError(String),                   // Failed to send control message
-}
-
 /// Convenience type alias
 pub type S9Result<T> = Result<T, S9WebSocketError>;
 ```
 
 ### Connection Failures
 ```rust
-use s9_websocket::{S9NonBlockingWebSocketClient, S9WebSocketError, WebSocketError};
+use s9_websocket::{S9NonBlockingWebSocketClient, S9WebSocketError};
 
 match S9NonBlockingWebSocketClient::connect("wss://invalid-uri") {
     Ok(client) => { /* use client */ },
-    Err(S9WebSocketError::WebSocket(WebSocketError::InvalidUri(msg))) => {
+    Err(S9WebSocketError::InvalidUri(msg)) => {
         eprintln!("Invalid URI: {}", msg);
     },
-    Err(S9WebSocketError::WebSocket(WebSocketError::Io(io_err))) => {
+    Err(S9WebSocketError::Io(io_err)) => {
         eprintln!("Network error: {}", io_err);
     },
     Err(e) => {

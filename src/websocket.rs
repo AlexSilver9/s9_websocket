@@ -10,7 +10,7 @@ use tungstenite::{Bytes, ClientRequestBuilder, Error, Message, Utf8Bytes, WebSoc
 use tungstenite::handshake::client::Response;
 use tungstenite::http::{Uri};
 use tungstenite::protocol::CloseFrame;
-use crate::error::{S9Result, WebSocketError, ControlChannelError};
+use crate::error::{S9Result, S9WebSocketError};
 
 // TODO: Refactor clients and structs/enums to separate files
 // TODO: Provide access to underlying streams
@@ -124,7 +124,7 @@ impl NonBlockingOptions {
     pub fn spin_wait_duration(mut self, duration: Option<Duration>) -> S9Result<Self> {
         if let Some(duration) = duration {
             if duration.is_zero() {
-                return Err(WebSocketError::InvalidConfiguration("Spin wait duration cannot be zero".to_string()).into());
+                return Err(S9WebSocketError::InvalidConfiguration("Spin wait duration cannot be zero".to_string()).into());
             }
         }
         self.shared.spin_wait_duration = duration;
@@ -165,7 +165,7 @@ impl BlockingOptions {
     pub fn spin_wait_duration(mut self, duration: Option<Duration>) -> S9Result<Self> {
         if let Some(duration) = duration {
             if duration.is_zero() {
-                return Err(WebSocketError::InvalidConfiguration("Spin wait duration cannot be zero".to_string()).into());
+                return Err(S9WebSocketError::InvalidConfiguration("Spin wait duration cannot be zero".to_string()).into());
             }
         }
         self.shared.spin_wait_duration = duration;
@@ -190,7 +190,7 @@ impl BlockingOptions {
     pub fn read_timeout(mut self, timeout: Option<Duration>) -> S9Result<Self> {
         if let Some(timeout) = timeout {
             if timeout.is_zero() {
-                return Err(WebSocketError::InvalidConfiguration("Read timeout duration cannot be zero".to_string()).into());
+                return Err(S9WebSocketError::InvalidConfiguration("Read timeout duration cannot be zero".to_string()).into());
             }
         }
         self.read_timeout = timeout;
@@ -202,7 +202,7 @@ impl BlockingOptions {
     pub fn write_timeout(mut self, timeout: Option<Duration>) -> S9Result<Self> {
         if let Some(timeout) = timeout {
             if timeout.is_zero() {
-                return Err(WebSocketError::InvalidConfiguration("Write timeout duration cannot be zero".to_string()).into());
+                return Err(S9WebSocketError::InvalidConfiguration("Write timeout duration cannot be zero".to_string()).into());
             }
         }
         self.write_timeout = timeout;
@@ -227,7 +227,7 @@ mod shared {
     pub(crate) fn connect_socket(uri: &str, headers: &HashMap<String, String>) -> S9Result<(WebSocket<MaybeTlsStream<TcpStream>>, Response)> {
         let uri = Uri::from_str(uri).map_err(|e| {
             tracing::error!("S9WebSocketClient error connecting to invalid URI: {}", uri);
-            WebSocketError::InvalidUri(e.to_string())
+            S9WebSocketError::InvalidUri(e.to_string())
         })?;
 
         let mut builder = ClientRequestBuilder::new(uri);
@@ -361,7 +361,7 @@ mod shared {
             })
             .map_err(|e| {
                 tracing::error!("Error sending text message: {}", e);
-                WebSocketError::from(e).into()
+                S9WebSocketError::from(e).into()
             })
     }
 
@@ -376,7 +376,7 @@ mod shared {
             })
             .map_err(|e| {
                 tracing::error!("Error sending binary message: {}", e);
-                WebSocketError::from(e).into()
+                S9WebSocketError::from(e).into()
             })
     }
 
@@ -391,7 +391,7 @@ mod shared {
             })
             .map_err(|e| {
                 tracing::error!("Error sending ping: {}", e);
-                WebSocketError::from(e).into()
+                S9WebSocketError::from(e).into()
             })
     }
 
@@ -406,7 +406,7 @@ mod shared {
             })
             .map_err(|e| {
                 tracing::error!("Error sending pong: {}", e);
-                WebSocketError::from(e).into()
+                S9WebSocketError::from(e).into()
             })
     }
 
@@ -542,7 +542,7 @@ impl S9AsyncNonBlockingWebSocketClient {
             Some(s) => s,
             None => {
                 tracing::error!("Socket just consumed");
-                return Err(WebSocketError::SocketUnavailable.into());
+                return Err(S9WebSocketError::SocketUnavailable.into());
             },
         };
         let control_rx = self.control_rx.clone();
