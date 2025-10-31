@@ -282,6 +282,9 @@ Spawns a background thread for socket operations and communicates via channels.
 - `connect_with_headers(uri: &str, headers: &HashMap<String, String>, options: NonBlockingOptions) -> S9Result<Self>`
 - `run(&mut self) -> S9Result<JoinHandle<()>>` - Starts background thread
 
+**Flushing**:
+- All send functions flush immediately after write
+
 #### Fields
 - `control_tx: Sender<ControlMessage>` - Send control messages (SendText, SendBinary, SendPing, SendPong, Close, ForceQuit)
 - `event_rx: Receiver<WebSocketEvent>` - Receive events
@@ -291,6 +294,8 @@ Spawns a background thread for socket operations and communicates via channels.
 Pure non-blocking client that runs on caller's thread using handler callbacks for events.
 
 **Socket Mode:** Uses non-blocking socket I/O (`set_nonblocking(true)`) internally. The name "NonBlocking" refers to the socket I/O mode, not the behavior of `run()` which blocks the calling thread indefinitely.
+
+**Flushing**: All send functions flush immediately after write
 
 #### Key Features
 - Runs entirely on caller's thread
@@ -310,6 +315,9 @@ Pure non-blocking client that runs on caller's thread using handler callbacks fo
 - `send_pong(&mut self, data: Vec<u8>) -> S9Result<()>`
 - `close(&mut self)` - Sends Close Frame to server
 - `force_quit(&mut self)` - Immediately breaks event loop
+
+**Flushing**:
+- All send functions flush immediately after write
 
 ### S9BlockingWebSocketClient
 
@@ -336,6 +344,9 @@ Synchronous client that runs on caller's thread using handler callbacks for even
 - `send_pong(&mut self, data: Vec<u8>) -> S9Result<()>`
 - `close(&mut self)` - Sends Close Frame to server
 - `force_quit(&mut self)` - Immediately breaks event loop
+
+**Flushing**:
+- All send functions flush immediately after write
 
 ### Shared Types
 

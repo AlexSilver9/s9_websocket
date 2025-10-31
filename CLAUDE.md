@@ -7,7 +7,14 @@ See @README for project overview and user-facing documentation.
 ## Quick Reference
 
 ### Most Important Files
-- `src/websocket.rs` - All three client implementations
+- `src/websocket/` - WebSocket client module (refactored into separate files)
+  - `async_client.rs` - S9AsyncNonBlockingWebSocketClient implementation
+  - `nonblocking_client.rs` - S9NonBlockingWebSocketClient implementation
+  - `blocking_client.rs` - S9BlockingWebSocketClient implementation
+  - `types.rs` - Public API types (traits, enums, macros)
+  - `options.rs` - Configuration options
+  - `shared.rs` - Shared internal helpers
+  - `mod.rs` - Module declarations and re-exports
 - `src/error.rs` - Error types
 - `src/lib.rs` - Public API exports
 - `examples/` - Usage examples for each client type
@@ -169,7 +176,17 @@ There is no I/O multiplexing support to run multiple connections on a single thr
 
 ## Code Modules and Key Types
 
-### Public API Types (all in `src/websocket.rs`)
+### Module Structure
+The websocket module is organized into separate files:
+- `src/websocket/types.rs` - Public API types (traits, enums, macros)
+- `src/websocket/options.rs` - Configuration options (NonBlockingOptions, BlockingOptions)
+- `src/websocket/shared.rs` - Shared internal helpers (connection, message sending, tracing)
+- `src/websocket/async_client.rs` - S9AsyncNonBlockingWebSocketClient implementation
+- `src/websocket/nonblocking_client.rs` - S9NonBlockingWebSocketClient implementation
+- `src/websocket/blocking_client.rs` - S9BlockingWebSocketClient implementation
+- `src/websocket/mod.rs` - Module declarations and public re-exports
+
+### Public API Types
 - `S9AsyncNonBlockingWebSocketClient` - Async/threaded client with channels (spawns thread)
 - `S9NonBlockingWebSocketClient` - Non-blocking client with handler callbacks (caller's thread)
 - `S9BlockingWebSocketClient` - Blocking client with handler callbacks
