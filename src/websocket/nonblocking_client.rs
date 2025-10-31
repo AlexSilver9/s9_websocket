@@ -19,10 +19,17 @@ pub struct S9NonBlockingWebSocketClient {
 }
 
 impl S9NonBlockingWebSocketClient {
+    /// Connects to a WebSocket server with non-blocking I/O.
+    ///
+    /// Establishes a WebSocket connection using non-blocking socket operations.
+    /// The connection supports both `ws://` and `wss://` protocols.
     pub fn connect(uri: &str, options: NonBlockingOptions) -> S9Result<S9NonBlockingWebSocketClient> {
         Self::connect_with_headers(uri, &HashMap::new(), options)
     }
 
+    /// Connects to a WebSocket server with custom HTTP headers.
+    ///
+    /// Allows setting custom headers (e.g., Authorization) during the WebSocket handshake.
     pub fn connect_with_headers(uri: &str, headers: &HashMap<String, String>, options: NonBlockingOptions) -> S9Result<S9NonBlockingWebSocketClient> {
         let (mut socket, _response) = shared::connect_socket(uri, headers)?;
 
@@ -35,6 +42,10 @@ impl S9NonBlockingWebSocketClient {
         })
     }
 
+    /// Starts the non-blocking event loop.
+    ///
+    /// Blocks the calling thread and processes WebSocket messages through handler callbacks.
+    /// Returns when the connection is closed or `force_quit()` is called from a handler.
     #[inline]
     pub fn run<HANDLER>(&mut self, handler: &mut HANDLER)
     where
@@ -106,30 +117,50 @@ impl S9NonBlockingWebSocketClient {
         }
     }
 
+    /// Sends a text message over the WebSocket connection.
+    ///
+    /// The message is immediately flushed to the socket.
     #[inline]
     pub fn send_text_message(&mut self, text: &str) -> S9Result<()> {
         shared::send_text_message_to_websocket(&mut self.socket, text)
     }
 
+    /// Sends a binary message over the WebSocket connection.
+    ///
+    /// The message is immediately flushed to the socket.
     #[inline]
     pub fn send_binary_message(&mut self, data: Vec<u8>) -> S9Result<()> {
         shared::send_binary_message_to_websocket(&mut self.socket, data)
     }
 
+    /// Sends a WebSocket ping frame.
+    ///
+    /// Can be used for keep-alive or latency measurement. The message is immediately flushed.
     #[inline]
     pub fn send_ping(&mut self, data: Vec<u8>) -> S9Result<()> {
         shared::send_ping_to_websocket(&mut self.socket, data)
     }
 
+    /// Sends a WebSocket pong frame.
+    ///
+    /// Typically used to respond to ping frames. The message is immediately flushed.
     #[inline]
     pub fn send_pong(&mut self, data: Vec<u8>) -> S9Result<()> {
         shared::send_pong_to_websocket(&mut self.socket, data)
     }
 
+    /// Initiates a graceful close of the WebSocket connection.
+    ///
+    /// Sends a close frame to the server.
+    /// The event loop continues until the server responds with a close frame or an error occurs.
     pub fn close(&mut self) {
         shared::close_websocket_with_logging(&mut self.socket, "on close");
     }
 
+    /// Immediately breaks the event loop without sending a close frame.
+    ///
+    /// Use this when you need to stop the client immediately, e.g. no close frame from server.
+    /// For graceful shutdown, prefer `close()`.
     pub fn force_quit(&mut self) {
         self.running = false;
     }

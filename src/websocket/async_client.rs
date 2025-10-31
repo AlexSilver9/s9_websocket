@@ -24,10 +24,17 @@ pub struct S9AsyncNonBlockingWebSocketClient {
 }
 
 impl S9AsyncNonBlockingWebSocketClient {
+    /// Connects to a WebSocket server and prepares for async operation.
+    ///
+    /// Creates a client ready to spawn a background thread via `run()`.
+    /// The connection supports both `ws://` and `wss://` protocols.
     pub fn connect(uri: &str, options: NonBlockingOptions)-> S9Result<S9AsyncNonBlockingWebSocketClient> {
         Self::connect_with_headers(uri, &HashMap::new(), options)
     }
 
+    /// Connects to a WebSocket server with custom HTTP headers.
+    ///
+    /// Allows setting custom headers (e.g., Authorization) during the WebSocket handshake.
     pub fn connect_with_headers(uri: &str, headers: &HashMap<String, String>, options: NonBlockingOptions) -> S9Result<S9AsyncNonBlockingWebSocketClient> {
         let (mut socket, _response) = shared::connect_socket(uri, headers)?;
 
@@ -66,6 +73,10 @@ impl S9AsyncNonBlockingWebSocketClient {
         self.socket.as_mut()
     }
 
+    /// Spawns the background thread and starts processing WebSocket events.
+    ///
+    /// Returns immediately with a `JoinHandle`. Send commands via `control_tx` and receive events via `event_rx`.
+    /// The socket is moved to the background thread and becomes unavailable for direct access.
     #[inline]
     pub fn run(&mut self) -> S9Result<JoinHandle<()>> {
         // Take ownership of the socket to put it into the tread by replacing it with a dummy value

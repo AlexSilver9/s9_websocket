@@ -19,14 +19,19 @@ pub struct NonBlockingOptions {
 }
 
 impl NonBlockingOptions {
-    /// Creates a new `NonBlockingOptions` builder.
+    /// Creates a new `NonBlockingOptions` with default values.
+    ///
+    /// All options are set to their defaults. Use builder methods to configure.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Sets the duration to wait in the event loop after control message processing and socket reads.
-    /// Must be None or greater than zero
-    /// This prevents the event loop from consuming 100% CPU.
+    /// Sets the sleep duration between event loop iterations.
+    ///
+    /// - `None`: Maximum performance, 100% CPU usage (busy spin loop)
+    /// - `Some(duration)`: Sleeps between iterations, reduces CPU usage
+    ///
+    /// Duration must be greater than zero if specified.
     pub fn spin_wait_duration(mut self, duration: Option<Duration>) -> S9Result<Self> {
         if let Some(duration) = duration {
             if duration.is_zero() {
@@ -60,14 +65,19 @@ pub struct BlockingOptions {
 }
 
 impl BlockingOptions {
-    /// Creates a new `BlockingOptions` builder.
+    /// Creates a new `BlockingOptions` with default values.
+    ///
+    /// All options are set to their defaults. Use builder methods to configure.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Sets the duration to wait in the event loop after control message processing and socket reads.
-    /// Must be None or greater than zero
-    /// This prevents the event loop from consuming 100% CPU.
+    /// Sets the sleep duration between event loop iterations.
+    ///
+    /// - `None`: No sleep (only meaningful with read/write timeouts)
+    /// - `Some(duration)`: Sleeps between iterations, reduces CPU usage
+    ///
+    /// Duration must be greater than zero if specified.
     pub fn spin_wait_duration(mut self, duration: Option<Duration>) -> S9Result<Self> {
         if let Some(duration) = duration {
             if duration.is_zero() {
